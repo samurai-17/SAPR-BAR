@@ -1,9 +1,11 @@
 import json
+
 from PyQt5.QtCore import Qt
 from PyQt5.QtWidgets import (
     QTableWidget, QHeaderView, QFileDialog, QMessageBox, QTableWidgetItem
 )
 from tables_delegate import TablesDelegate
+import validators
 
 
 class Table(QTableWidget):
@@ -19,8 +21,6 @@ class Table(QTableWidget):
         self.setVerticalHeaderLabels(ver_lab)
         header_h = self.horizontalHeader()
         header_h.setSectionResizeMode(QHeaderView.Stretch)
-        # header_v = self.verticalHeader()
-        # header_v.setSectionResizeMode(QHeaderView.Stretch)
 
         if title == "Стержни":
             self.setItemDelegate(TablesDelegate(self, is_int=False, is_positive=True))
@@ -51,55 +51,39 @@ class Table(QTableWidget):
         self.setCurrentCell(-1, -1)
 
     def table_to_dicts(self, keys):
-        """
-        Преобразует таблицу в список словарей по заданным ключам.
-        Поддерживает случаи, когда keys содержит дополнительные "авто"-ключи
-        (например "bar_number"), которые не соответствуют колонкам таблицы.
-        """
-        auto_keys = {"bar_number"}  # ключи, для которых ставим номер строки
+        auto_keys = {"bar_number"}
         data = []
-
-        # Определяем, на сколько ключей больше, чем фактических столбцов (смещение)
         offset = len(keys) - self.columnCount()
         if offset < 0:
-            offset = 0  # если ключей меньше, чем столбцов, не делаем отрицательное смещение
+            offset = 0
 
         for row in range(self.rowCount()):
             row_dict = {}
             for col_index, key in enumerate(keys):
-                # Если ключ — авто-ключ, подставляем номер строки
                 if key in auto_keys:
                     row_dict[key] = str(row + 1)
                     continue
-
-                # Для остальных ключей вычисляем соответствующий индекс столбца в таблице
                 data_col = col_index - offset
-
-                # Если data_col выходит за границы таблицы, записываем пустую строку
                 if data_col < 0 or data_col >= self.columnCount():
                     row_dict[key] = ""
                 else:
                     item = self.item(row, data_col)
                     row_dict[key] = item.text() if item else ""
-
             data.append(row_dict)
-
         return data
 
     def is_table_filled(self):
-        """Проверяет, что все ячейки таблицы заполнены"""
         for row in range(self.rowCount()):
             for col in range(self.columnCount()):
                 item = self.item(row, col)
                 if item is None or item.text().strip() == "":
                     return False
-        return True
+        return self.rowCount() > 0 and self.columnCount() > 0
 
     def save_all_tables(self):
-        """Сохраняет все таблицы в один JSON (метод внутри Table)"""
         w = self.parent_window
 
-        # Проверка заполнения
+        # Проверка заполненности
         if not w.table_1.table.is_table_filled():
             QMessageBox.warning(self, "Ошибка", "Таблица 'Стержни' заполнена не полностью!")
             return
@@ -108,6 +92,10 @@ class Table(QTableWidget):
             return
         if not w.table_3.table.is_table_filled():
             QMessageBox.warning(self, "Ошибка", "Таблица 'Сосредоточенные нагрузки' заполнена не полностью!")
+            return
+
+        # ✅ Проверка на корректность данных
+        if not validators.validate_data_on_save(w):
             return
 
         options = QFileDialog.Options()
@@ -142,7 +130,6 @@ class Table(QTableWidget):
         QMessageBox.information(self, "Сохранение", f"✅ Таблицы сохранены в:\n{file_name}")
 
     def load_all_tables(self):
-        """Загружает таблицы из JSON (в соответствии с новой структурой)"""
         w = self.parent_window
         options = QFileDialog.Options()
         file_name, _ = QFileDialog.getOpenFileName(
@@ -158,42 +145,27 @@ class Table(QTableWidget):
             QMessageBox.critical(self, "Ошибка", f"Не удалось загрузить JSON:\n{e}")
             return
 
+        # ✅ Проверяем валидность JSON перед загрузкой
+        if not validators.validate_data_on_load(w, data):
+            return
+
         try:
             table_data = data["Tables"][0]
-
-            # Стержни
-            sterzhni_values = table_data.get("values", [])
-            self.fill_table_from_dicts(
-                w.table_1.table, sterzhni_values, skip_auto_keys={"bar_number"})
-
-            # Распределённые
-            raspr_values = table_data.get("values_raspr", [])
-            self.fill_table_from_dicts(
-                w.table_2.table, raspr_values)
-
-            # Сосредоточенные
-            sosred_values = table_data.get("value_sosred", [])
-            self.fill_table_from_dicts(
-                w.table_3.table, sosred_values)
-
-            QMessageBox.information(self, "Загрузка", f" Таблицы успешно загружены из:\n{file_name}")
-
+            w.table_1.table.fill_table_from_dicts(w.table_1.table, table_data.get("values", []), skip_auto_keys={"bar_number"})
+            w.table_2.table.fill_table_from_dicts(w.table_2.table, table_data.get("values_raspr", []))
+            w.table_3.table.fill_table_from_dicts(w.table_3.table, table_data.get("value_sosred", []))
+            QMessageBox.information(self, "Загрузка", f"✅ Таблицы успешно загружены из:\n{file_name}")
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Ошибка при разборе JSON:\n{e}")
 
     def fill_table_from_dicts(self, table, values_list, skip_auto_keys=None):
-        """Заполняет таблицу из списка словарей"""
         if skip_auto_keys is None:
             skip_auto_keys = set()
-
         if not values_list:
             return
-
-        # Подгоняем размер
         table.setRowCount(len(values_list))
         expected_cols = len(values_list[0]) - len(skip_auto_keys)
         table.setColumnCount(expected_cols)
-
         for row, row_data in enumerate(values_list):
             col = 0
             for key, value in row_data.items():

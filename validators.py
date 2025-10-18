@@ -66,7 +66,7 @@ def validate_data_on_load(w, data):
                         QMessageBox.warning(w, "Ошибка", f"Пустое поле в таблице '{table_name}' ({key})")
                         return False
                     try:
-                        if float(value) < 0:
+                        if float(value) < 0 and key not in {"q_value", "f_value"}:
                             QMessageBox.warning(
                                 w, "Ошибка",
                                 f"Отрицательное значение в таблице '{table_name}' ({key})"

@@ -6,7 +6,7 @@ from PyQt5.QtGui import QIntValidator, QDoubleValidator, QValidator
 
 
 class EmptyAllowedValidator(QValidator):
-    def init(self, base_validator, parent=None):
+    def __init__(self, base_validator, parent=None):
         super().__init__(parent)
         self.base_validator = base_validator
 
@@ -29,7 +29,6 @@ class TablesDelegate(QItemDelegate):
             row_validator = QIntValidator()
             if self.is_positive:
                 row_validator.setBottom(0)
-            row_editor.setValidator(EmptyAllowedValidator(row_validator))
         else:
             row_validator = QDoubleValidator()
             if self.is_positive:

@@ -26,10 +26,10 @@ class Table(QTableWidget):
             self.setItemDelegate(TablesDelegate(self, is_int=False, is_positive=True))
         elif title == "Распределенные нагрузки":
             self.setItemDelegateForColumn(0, TablesDelegate(self, is_int=True, is_positive=True))
-            self.setItemDelegateForColumn(1, TablesDelegate(self, is_int=False, is_positive=True))
+            self.setItemDelegateForColumn(1, TablesDelegate(self, is_int=False, is_positive=False))
         else:
             self.setItemDelegateForColumn(0, TablesDelegate(self, is_int=True, is_positive=True))
-            self.setItemDelegateForColumn(1, TablesDelegate(self, is_int=False, is_positive=True))
+            self.setItemDelegateForColumn(1, TablesDelegate(self, is_int=False, is_positive=False))
 
     def add_row(self):
         cur_row = self.currentRow()
@@ -121,7 +121,9 @@ class Table(QTableWidget):
                     "table_sosred": "Сосредоточенные нагрузки",
                     "value_sosred": sosred_values
                 }
-            ]
+            ],
+            "left_fixed": w.chk_left_fixed.isChecked(),
+            "right_fixed": w.chk_right_fixed.isChecked()
         }
 
         with open(file_name, "w", encoding="utf-8") as f:
@@ -151,12 +153,18 @@ class Table(QTableWidget):
 
         try:
             table_data = data["Tables"][0]
-            w.table_1.table.fill_table_from_dicts(w.table_1.table, table_data.get("values", []), skip_auto_keys={"bar_number"})
+            w.table_1.table.fill_table_from_dicts(w.table_1.table, table_data.get("values", []),
+                                                  skip_auto_keys={"bar_number"})
             w.table_2.table.fill_table_from_dicts(w.table_2.table, table_data.get("values_raspr", []))
             w.table_3.table.fill_table_from_dicts(w.table_3.table, table_data.get("value_sosred", []))
             QMessageBox.information(self, "Загрузка", f"✅ Таблицы успешно загружены из:\n{file_name}")
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Ошибка при разборе JSON:\n{e}")
+
+        if "left_fixed" in data:
+            w.chk_left_fixed.setChecked(bool(data["left_fixed"]))
+        if "right_fixed" in data:
+            w.chk_right_fixed.setChecked(bool(data["right_fixed"]))
 
     def fill_table_from_dicts(self, table, values_list, skip_auto_keys=None):
         if skip_auto_keys is None:

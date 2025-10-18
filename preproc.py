@@ -31,24 +31,29 @@ class Window(QWidget):
         self.chk_show_tables = QCheckBox("Показать / скрыть таблицы")
         self.chk_left_fixed = QCheckBox("Левая заделка")
         self.chk_right_fixed = QCheckBox("Правая заделка")
-        btn_save_all = QPushButton("💾 Сохранить все таблицы")
-        btn_load_all = QPushButton("📂 Загрузить все таблицы")
-        btn_draw = QPushButton("🎨 Отрисовать конструкцию")
+        self.btn_save_all = QPushButton("💾 Сохранить все таблицы")
+        self.btn_load_all = QPushButton("📂 Загрузить все таблицы")
+        self.btn_draw = QPushButton("🎨 Отрисовать конструкцию")
 
-        btn_save_all.clicked.connect(lambda: self.table_1.table.save_all_tables())
-        btn_load_all.clicked.connect(lambda: self.table_1.table.load_all_tables())
-        self.chk_show_tables.clicked.connect(self.ch_click)
-        btn_draw.clicked.connect(self.draw_construction)
+        self.chk_left_fixed.stateChanged.connect(lambda state: setattr(self, "left_fixed", bool(state))) # noqa
+        self.chk_right_fixed.stateChanged.connect(lambda state: setattr(self, "right_fixed", bool(state))) # noqa
+
+        # начальные значения
+        self.left_fixed = False
+        self.right_fixed = False
+
+        self.btn_save_all.clicked.connect(lambda: self.table_1.table.save_all_tables()) # noqa
+        self.btn_load_all.clicked.connect(lambda: self.table_1.table.load_all_tables()) # noqa
+        self.chk_show_tables.clicked.connect(self.ch_click) # noqa
+        self.btn_draw.clicked.connect(self.draw_construction) # noqa
 
         # порядок и отступы
         btn_layout.addWidget(self.chk_show_tables)
         btn_layout.addWidget(self.chk_left_fixed)
         btn_layout.addWidget(self.chk_right_fixed)
-        btn_layout.addSpacing(10)
-        btn_layout.addWidget(btn_save_all)
-        btn_layout.addWidget(btn_load_all)
-        btn_layout.addSpacing(12)
-        btn_layout.addWidget(btn_draw)
+        btn_layout.addWidget(self.btn_save_all)
+        btn_layout.addWidget(self.btn_load_all)
+        btn_layout.addWidget(self.btn_draw)
         btn_layout.addStretch(1)
 
         btn_widget = QWidget()
@@ -100,29 +105,27 @@ class Window(QWidget):
 
         # центр — DrawArea (растягивается)
         self.draw_area = DrawArea(self)
+        self.draw_area.setMinimumWidth(500)
         self.draw_area.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.main_layout.addWidget(self.draw_area, 1)  # stretch 1 — занимает все свободное
 
         right = self.create_tables_section()
         self.main_layout.addWidget(right, 0)  # stretch 0 — фиксированная
 
-        # подключаем изменение таблиц (не автоотрисовка; оставляем только привязки кнопок)
-        # если захотим автоперерисовку — можно закомментировать
-
         self.setLayout(self.main_layout)
 
     def create_table_group(self, title, col_c, row_c, hor_lab, ver_lab):
         group = QGroupBox(title)
-        group.setAlignment(QtCore.Qt.AlignHCenter)
+        group.setAlignment(QtCore.Qt.AlignHCenter) # noqa
         vbox = QVBoxLayout()
         hbox = QHBoxLayout()
 
         table = Table(self, title, col_c, row_c, hor_lab, ver_lab)
 
         table.btn_add = QPushButton("Добавить")
-        table.btn_add.clicked.connect(table.add_row)
+        table.btn_add.clicked.connect(table.add_row) # noqa
         table.btn_del = QPushButton("Удалить")
-        table.btn_del.clicked.connect(table.del_row)
+        table.btn_del.clicked.connect(table.del_row) # noqa
 
         vbox.addWidget(table)
         hbox.addWidget(table.btn_add)

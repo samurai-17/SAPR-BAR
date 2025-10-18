@@ -1,7 +1,8 @@
-# draw_area.py
-from PyQt5.QtWidgets import QWidget
+from PyQt5.QtWidgets import QWidget, QMessageBox
 from PyQt5.QtGui import QPainter, QPen, QColor, QBrush
 from PyQt5.QtCore import Qt
+from validators import validate_data_on_save  # импортируем валидацию
+
 
 
 def safe_float(text, default=None):
@@ -23,8 +24,26 @@ class DrawArea(QWidget):
         self.structure_data = None
 
     def redraw_structure(self):
-        """Считывает таблицы и подготавливает данные для отрисовки"""
+        """Считывает таблицы, валидирует и подготавливает данные для отрисовки"""
         w = self.parent_window
+
+        # --- ВАЛИДАЦИЯ ---
+        if not validate_data_on_save(w):
+            QMessageBox.warning(self, "Ошибка", "Исправьте ошибки в таблицах перед построением конструкции.")
+            self.structure_data = None
+            self.update()
+            return
+        elif not w.table_1.table.is_table_filled():
+            QMessageBox.warning(self, "Ошибка", "Таблица 'Стержни' заполнена не полностью!")
+            return
+        elif not w.table_2.table.is_table_filled():
+            QMessageBox.warning(self, "Ошибка", "Таблица 'Распределенные нагрузки' заполнена не полностью!")
+            return
+        elif not w.table_3.table.is_table_filled():
+            QMessageBox.warning(self, "Ошибка", "Таблица 'Сосредоточенные нагрузки' заполнена не полностью!")
+            return
+
+        # --- ЧТЕНИЕ ТАБЛИЦ ---
         bars = []
         for row in range(w.table_1.table.rowCount()):
             L = safe_float(w.table_1.table.item(row, 0).text() if w.table_1.table.item(row, 0) else "", None)
@@ -50,13 +69,17 @@ class DrawArea(QWidget):
             concentrated.append((int(node), F))
 
         if not bars:
+            QMessageBox.warning(self, "Ошибка", "Не заданы стержни для построения.")
             self.structure_data = None
         else:
             self.structure_data = {
                 "bars": bars,
                 "distributed": distributed,
-                "concentrated": concentrated
+                "concentrated": concentrated,
+                "left_fixed": getattr(w, "left_fixed", False),
+                "right_fixed": getattr(w, "right_fixed", False),
             }
+
         self.update()
 
     def paintEvent(self, event):
@@ -74,19 +97,22 @@ class DrawArea(QWidget):
         distributed = data["distributed"]
         concentrated = data["concentrated"]
 
+        left_fixed = data.get("left_fixed", True)
+        right_fixed = data.get("right_fixed", True)
+
         # размеры пространства для рисования
-        left_margin = 20
-        right_margin = 20
+        left_margin = 60
+        right_margin = 60
         top_margin = 30
         bottom_margin = 30
         avail_w = max(50, self.width() - left_margin - right_margin)
         avail_h = max(50, self.height() - top_margin - bottom_margin)
 
-        # масштабирование длины и высоты
         total_L = sum(L for L, _ in bars)
         if total_L <= 0:
             qp.drawText(10, 20, "Нулевые длины стержней")
             return
+
         scale_x = (avail_w / total_L) * 0.85
         max_A = max(A for _, A in bars)
         max_draw_h = avail_h * 0.3
@@ -96,7 +122,7 @@ class DrawArea(QWidget):
         center_y = top_margin + avail_h / 2
         node_positions = [x]
 
-        # рисуем стержни
+        # --- ОТРИСОВКА СТЕРЖНЕЙ ---
         for (L, A) in bars:
             rect_w = L * scale_x
             rect_h = max(4, A * scale_y)
@@ -107,7 +133,19 @@ class DrawArea(QWidget):
             x += rect_w
             node_positions.append(x)
 
-        # распределённые нагрузки — горизонтальные зелёные стрелки вдоль стержня
+        # --- ОТРИСОВКА ЗАДЕЛОК ---
+        qp.setPen(QPen(Qt.black, 2))
+        qp.setBrush(QBrush(QColor(180, 180, 180)))
+
+        # Левая заделка
+        if left_fixed:
+            self._draw_fixed_support(qp, node_positions[0], center_y, height=avail_h * 0.4, side="left")
+
+        # Правая заделка
+        if right_fixed:
+            self._draw_fixed_support(qp, node_positions[-1], center_y, height=avail_h * 0.4, side="right")
+
+        # --- РАСПРЕДЕЛЕННЫЕ НАГРУЗКИ ---
         for bar_num, q in distributed:
             if bar_num < 1 or bar_num > len(bars):
                 continue
@@ -134,26 +172,26 @@ class DrawArea(QWidget):
                     continue
                 self._draw_horizontal_arrow(qp, px, rect_mid_y, q, size=14)
 
-            # подпись нагрузки
             qp.setPen(Qt.black)
             qp.drawText(int((x1 + x2) / 2) - 15, int(rect_mid_y - 10), f"q={q}")
 
-        # сосредоточенные нагрузки — горизонтальные красные стрелки из узлов
+        # --- СОСРЕДОТОЧЕННЫЕ НАГРУЗКИ ---
         for node, F in concentrated:
             if node < 1 or node > len(node_positions):
                 continue
-
             px = node_positions[node - 1]
             py = center_y
+
             pen_force = QPen(QColor(200, 0, 0), 2)
             brush_force = QBrush(QColor(200, 0, 0))
             qp.setPen(pen_force)
             qp.setBrush(brush_force)
 
-            self._draw_horizontal_arrow(qp, px, py, F, size=25)
-
+            self._draw_horizontal_arrow(qp, px, py, F, size=28)
             qp.setPen(Qt.black)
-            qp.drawText(int(px), int(py - 15), f"F={F}")
+            qp.drawText(int(px+5), int(py - 15), f"F={F}")
+
+    # --- СЛУЖЕБНЫЕ МЕТОДЫ ---
 
     def _draw_horizontal_arrow(self, qp, x, y, value, size=20):
         """Горизонтальная стрелка (вправо если >0, влево если <0)"""
@@ -169,3 +207,21 @@ class DrawArea(QWidget):
         else:
             qp.drawLine(int(line_x2), int(y), int(line_x2 + 6), int(y - 4))
             qp.drawLine(int(line_x2), int(y), int(line_x2 + 6), int(y + 4))
+
+    def _draw_fixed_support(self, qp, x, y, height=80, side="left"):
+        """Отрисовка заделки (вертикальная штриховка)"""
+        half_h = height / 2
+        top = y - half_h
+        bottom = y + half_h
+
+        if side == "left":
+            qp.drawLine(int(x), int(top), int(x), int(bottom))
+            # диагональная штриховка
+            step = 6
+            for yy in range(int(top), int(bottom), step):
+                qp.drawLine(int(x), yy, int(x - 10), yy + step)
+        elif side == "right":
+            qp.drawLine(int(x), int(top), int(x), int(bottom))
+            step = 6
+            for yy in range(int(top), int(bottom), step):
+                qp.drawLine(int(x), yy, int(x + 10), yy + step)

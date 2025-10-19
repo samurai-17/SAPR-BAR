@@ -179,6 +179,8 @@ class Table(QTableWidget):
             for key, value in row_data.items():
                 if key in skip_auto_keys:
                     continue
+                if value[0] == ".":
+                    value = "0" + value
                 table.setItem(row, col, QTableWidgetItem(str(value)))
                 col += 1
 

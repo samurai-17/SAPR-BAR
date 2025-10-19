@@ -1,0 +1,32 @@
+{
+    "Tables": [
+        {
+            "table": "Стержни",
+            "values": [
+                {
+                    "bar_number": "1",
+                    "bar_length": "1",
+                    "bar_cross_section": "1",
+                    "bar_modulus_elasticity": "1",
+                    "bar_tension": "1"
+                }
+            ],
+            "table_raspr": "Распределенные нагрузки",
+            "values_raspr": [
+                {
+                    "bar_number_raspr": "1",
+                    "q_value": "1"
+                }
+            ],
+            "table_sosred": "Сосредоточенные нагрузки",
+            "value_sosred": [
+                {
+                    "node_number": "1",
+                    "f_value": "0"
+                }
+            ]
+        }
+    ],
+    "left_fixed": false,
+    "right_fixed": false
+}

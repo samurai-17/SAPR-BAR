@@ -36,12 +36,12 @@ class DrawArea(QWidget):
         elif not w.table_1.table.is_table_filled():
             QMessageBox.warning(self, "Ошибка", "Таблица 'Стержни' заполнена не полностью!")
             return
-        elif not w.table_2.table.is_table_filled():
-            QMessageBox.warning(self, "Ошибка", "Таблица 'Распределенные нагрузки' заполнена не полностью!")
-            return
-        elif not w.table_3.table.is_table_filled():
-            QMessageBox.warning(self, "Ошибка", "Таблица 'Сосредоточенные нагрузки' заполнена не полностью!")
-            return
+        # elif not w.table_2.table.is_table_filled():
+        #     QMessageBox.warning(self, "Ошибка", "Таблица 'Распределенные нагрузки' заполнена не полностью!")
+        #     return
+        # elif not w.table_3.table.is_table_filled():
+        #     QMessageBox.warning(self, "Ошибка", "Таблица 'Сосредоточенные нагрузки' заполнена не полностью!")
+        #     return
 
         # --- ЧТЕНИЕ ТАБЛИЦ ---
         bars = []
@@ -67,6 +67,46 @@ class DrawArea(QWidget):
             if node is None or F is None:
                 continue
             concentrated.append((int(node), F))
+        #
+        # try:
+        #     n_bars = len(bars)
+        #     n_nodes = n_bars + 1
+        #
+        #     # Читаем состояние чекбоксов
+        #     left_is_fixed = getattr(w, "chk_left_fixed", None)
+        #     left_is_fixed = left_is_fixed.isChecked() if left_is_fixed else getattr(w, "left_fixed", False)
+        #
+        #     right_is_fixed = getattr(w, "chk_right_fixed", None)
+        #     right_is_fixed = right_is_fixed.isChecked() if right_is_fixed else getattr(w, "right_fixed", False)
+        #
+        #     # Обновляем список сосредоточенных сил
+        #     new_conc = []
+        #     for node, F in concentrated:
+        #         if (left_is_fixed and node == 1 and F != 0) or (right_is_fixed and node == n_nodes and F != 0):
+        #             QMessageBox.warning(
+        #                 w, "Ошибка",
+        #                 f"В узле с заделкой не может быть сосредоточенной силы! Она была заменена на 0"
+        #             )
+        #             new_conc.append((node, 0.0))
+        #         else:
+        #             new_conc.append((node, F))
+        #     concentrated = new_conc
+        #
+        #     # Также обновим таблицу, чтобы пользователь видел "0"
+        #     from PyQt5.QtWidgets import QTableWidgetItem
+        #     table3 = w.table_3.table
+        #     for row in range(table3.rowCount()):
+        #         item_node = table3.item(row, 0)
+        #         if not item_node:
+        #             continue
+        #         try:
+        #             node_num = int(item_node.text())
+        #         except Exception:
+        #             continue
+        #         if (left_is_fixed and node_num == 1) or (right_is_fixed and node_num == n_nodes):
+        #             table3.setItem(row, 1, QTableWidgetItem("0"))
+        # except Exception as e:
+        #     print(f"[DEBUG] Ошибка при проверке заделок: {e}")
 
         if not bars:
             QMessageBox.warning(self, "Ошибка", "Не заданы стержни для построения.")
@@ -150,6 +190,9 @@ class DrawArea(QWidget):
             if bar_num < 1 or bar_num > len(bars):
                 continue
 
+            if q == 0:
+                continue
+
             x1 = node_positions[bar_num - 1]
             x2 = node_positions[bar_num]
             rect_mid_y = center_y
@@ -179,6 +222,10 @@ class DrawArea(QWidget):
         for node, F in concentrated:
             if node < 1 or node > len(node_positions):
                 continue
+
+            if F == 0:
+                continue
+
             px = node_positions[node - 1]
             py = center_y
 

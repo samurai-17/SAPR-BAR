@@ -42,7 +42,7 @@ class Table(QTableWidget):
 
     def del_row(self):
         cur_row = self.currentRow()
-        if self.rowCount() > 0:
+        if self.rowCount() >= 2:
             if cur_row == -1:
                 self.removeRow(self.rowCount() - 1)
             else:
@@ -68,7 +68,7 @@ class Table(QTableWidget):
                     row_dict[key] = ""
                 else:
                     item = self.item(row, data_col)
-                    row_dict[key] = item.text() if item else ""
+                    row_dict[key] = item.text() if item else "0"
             data.append(row_dict)
         return data
 
@@ -87,12 +87,12 @@ class Table(QTableWidget):
         if not w.table_1.table.is_table_filled():
             QMessageBox.warning(self, "Ошибка", "Таблица 'Стержни' заполнена не полностью!")
             return
-        if not w.table_2.table.is_table_filled():
-            QMessageBox.warning(self, "Ошибка", "Таблица 'Распределенные нагрузки' заполнена не полностью!")
-            return
-        if not w.table_3.table.is_table_filled():
-            QMessageBox.warning(self, "Ошибка", "Таблица 'Сосредоточенные нагрузки' заполнена не полностью!")
-            return
+        # if not w.table_2.table.is_table_filled():
+        #     QMessageBox.warning(self, "Ошибка", "Таблица 'Распределенные нагрузки' заполнена не полностью!")
+        #     return
+        # if not w.table_3.table.is_table_filled():
+        #     QMessageBox.warning(self, "Ошибка", "Таблица 'Сосредоточенные нагрузки' заполнена не полностью!")
+        #     return
 
         # ✅ Проверка на корректность данных
         if not validators.validate_data_on_save(w):

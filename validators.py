@@ -1,4 +1,29 @@
-from PyQt5.QtWidgets import QMessageBox
+from PyQt5.QtWidgets import QMessageBox, QTableWidgetItem
+
+
+def get_fixation_state(w):
+    """Безопасно получает состояние заделок"""
+    left_fixed = False
+    right_fixed = False
+
+    # Если чекбоксы существуют — читаем их
+    if hasattr(w, "chk_left_fixed"):
+        try:
+            left_fixed = bool(w.chk_left_fixed.isChecked())
+        except Exception:
+            pass
+    elif hasattr(w, "left_fixed"):
+        left_fixed = bool(getattr(w, "left_fixed", False))
+
+    if hasattr(w, "chk_right_fixed"):
+        try:
+            right_fixed = bool(w.chk_right_fixed.isChecked())
+        except Exception:
+            pass
+    elif hasattr(w, "right_fixed"):
+        right_fixed = bool(getattr(w, "right_fixed", False))
+
+    return left_fixed, right_fixed
 
 
 def validate_data_on_save(w):
@@ -30,8 +55,22 @@ def validate_data_on_save(w):
         for row in range(w.table_2.table.rowCount()):
             bar_item = w.table_2.table.item(row, 0)
             q_item = w.table_2.table.item(row, 1)
-            if not bar_item or not q_item:
-                continue
+            if not bar_item or bar_item.text() == '':
+                if not q_item or q_item.text() == '':
+                    bar_item = QTableWidgetItem("1")
+                    w.table_2.table.setItem(row, 0, QTableWidgetItem("1"))
+                    w.table_2.table.setItem(row, 1, QTableWidgetItem("0"))
+                else:
+                    QMessageBox.warning(
+                        w, "Ошибка",
+                        f"Распределенные нагрузки' не указан стержень, "
+                        f"но указана сила q"
+                    )
+                    return False
+            else:
+                if not q_item or q_item.text() == '':
+                    w.table_2.table.setItem(row, 1, QTableWidgetItem("0"))
+
             bar_num = int(bar_item.text())
             if bar_num < 1 or bar_num > n_bars:
                 QMessageBox.warning(
@@ -46,14 +85,50 @@ def validate_data_on_save(w):
         for row in range(w.table_3.table.rowCount()):
             node_item = w.table_3.table.item(row, 0)
             F_item = w.table_3.table.item(row, 1)
-            if not node_item or not F_item:
-                continue
+            if not node_item or node_item.text() == '':
+                if not F_item or F_item.text() == '':
+                    node_item = QTableWidgetItem("1")
+                    w.table_3.table.setItem(row, 0, QTableWidgetItem("1"))
+                    w.table_3.table.setItem(row, 1, QTableWidgetItem("0"))
+                else:
+                    QMessageBox.warning(
+                        w, "Ошибка",
+                        f"В таблице 'Сосредоточенные нагрузки' не указан узел, "
+                        f"но указана сила F"
+                    )
+                    return False
+            else:
+                if not F_item or F_item.text() == '':
+                    w.table_3.table.setItem(row, 1, QTableWidgetItem("0"))
+
             node_num = int(node_item.text())
             if node_num < 1 or node_num > n_nodes:
                 QMessageBox.warning(
                     w, "Ошибка",
                     f"В таблице 'Сосредоточенные нагрузки' указан узел №{node_num}, "
                     f"но всего узлов: {n_nodes}"
+                )
+                return False
+
+            F_val = 0.0
+            if F_item and F_item.text().strip() != "":
+                try:
+                    F_val = float(F_item.text())
+                except ValueError:
+                    QMessageBox.warning(w, "Ошибка", f"Некорректное значение F (строка {row + 1}).")
+                    return False
+
+            left_fixed = getattr(w, "left_fixed", False)
+            right_fixed = getattr(w, "right_fixed", False)
+
+            # запрет сохранять ненулевую силу в заделанном узле
+            if (left_fixed and node_num == 1 and abs(F_val) > 0.0) or (
+                    right_fixed and node_num == n_nodes and abs(F_val) > 0.0):
+                side = "левом" if (left_fixed and node_num == 1) else "правом"
+                QMessageBox.warning(
+                    w,
+                    "Ошибка",
+                    f"Нельзя задать ненулевую сосредоточенную силу в {side} заделанном узле (узел {node_num})."
                 )
                 return False
 
@@ -74,6 +149,10 @@ def validate_data_on_load(w, data):
 
         n_bars = len(sterzhni)
         n_nodes = n_bars + 1
+
+        # --- читаем флаги заделок из JSON, если они там есть ---
+        left_fixed = bool(data.get("left_fixed", False))
+        right_fixed = bool(data.get("right_fixed", False))
 
         # Проверяем содержимое таблиц
         for row_index, row in enumerate(sterzhni):
@@ -107,6 +186,7 @@ def validate_data_on_load(w, data):
         for row_index, row in enumerate(sosred):
             try:
                 node_num = int(row.get("node_number", 0))
+                F_val = float(row.get("f_value", 0))
                 if node_num < 1 or node_num > n_nodes:
                     QMessageBox.warning(
                         w, "Ошибка",
@@ -115,6 +195,15 @@ def validate_data_on_load(w, data):
                     return False
             except ValueError:
                 QMessageBox.warning(w, "Ошибка", f"Некорректные данные в сосредоточенных нагрузках (строка {row_index + 1})")
+                return False
+
+
+
+            if (left_fixed and node_num == 1 and abs(F_val) > 0.0) or (
+                    right_fixed and node_num == n_nodes and abs(F_val) > 0.0):
+                side = "левом" if (left_fixed and node_num == 1) else "правом"
+                QMessageBox.warning(w, "Ошибка",
+                                    f"Файл содержит ненулевую силу в {side} заделанном узле (узел {node_num}).")
                 return False
 
         return True

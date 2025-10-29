@@ -4,16 +4,20 @@ from PyQt5.QtGui import QIntValidator, QDoubleValidator, QValidator
 
 
 class EmptyAllowedValidator(QValidator):
-    """Позволяет оставлять ячейку пустой, но при этом проверяет остальные значения."""
     def __init__(self, base_validator, parent=None):
         super().__init__(parent)
         self.base_validator = base_validator
 
     def validate(self, text, pos):
-        # Разрешаем пустую строку
         if text.strip() == "":
             return QValidator.Acceptable, text, pos
-        return self.base_validator.validate(text, pos)
+
+        try:
+            result = self.base_validator.validate(text, pos)
+            return result
+        except Exception:
+            # ⚙️ если QDoubleValidator выбросил ошибку — просто не принимаем ввод
+            return QValidator.Intermediate, text, pos
 
 
 class TablesDelegate(QItemDelegate):
@@ -25,21 +29,22 @@ class TablesDelegate(QItemDelegate):
     def createEditor(self, parent, option, index):
         editor = QLineEdit(parent)
 
-        # 🔹 Настраиваем валидатор
         if self.is_int:
-            validator = QIntValidator()
+            row_validator = QIntValidator()
             if self.is_positive:
-                validator.setBottom(0)
+                row_validator.setBottom(0)
         else:
-            validator = QDoubleValidator()
+            row_validator = QDoubleValidator()
             if self.is_positive:
-                validator.setBottom(0.0)
-            validator.setNotation(QDoubleValidator.StandardNotation)
+                row_validator.setBottom(0.0)
 
-        validator.setLocale(QtCore.QLocale(QtCore.QLocale.English, QtCore.QLocale.UnitedStates))
-        editor.setValidator(EmptyAllowedValidator(validator))
+            # ⚙️ Настройки для корректной работы с малыми числами
+            row_validator.setDecimals(15)
+            row_validator.setNotation(QDoubleValidator.ScientificNotation)
 
-        # 🔹 Автоматическое добавление "0" перед точкой
+        row_validator.setLocale(QtCore.QLocale(QtCore.QLocale.English, QtCore.QLocale.UnitedStates))
+        editor.setValidator(EmptyAllowedValidator(row_validator))
+
         def fix_dot_prefix(text):
             # если пользователь стирает всё — не мешаем
             if not text.strip():
@@ -85,3 +90,4 @@ class TablesDelegate(QItemDelegate):
             return  # игнорируем некорректный ввод
 
         model.setData(index, text)
+

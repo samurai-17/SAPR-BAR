@@ -181,6 +181,8 @@ class Table(QTableWidget):
                     continue
                 if value[0] == ".":
                     value = "0" + value
+                if value[-1] == ".":
+                    value = value + "0"
                 table.setItem(row, col, QTableWidgetItem(str(value)))
                 col += 1
 

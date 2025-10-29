@@ -6,7 +6,6 @@ def get_fixation_state(w):
     left_fixed = False
     right_fixed = False
 
-    # Если чекбоксы существуют — читаем их
     if hasattr(w, "chk_left_fixed"):
         try:
             left_fixed = bool(w.chk_left_fixed.isChecked())
@@ -35,23 +34,36 @@ def validate_data_on_save(w):
         for row in range(n_bars):
             L_item = w.table_1.table.item(row, 0)
             A_item = w.table_1.table.item(row, 1)
-            if not L_item or not A_item:
+            Upr = w.table_1.table.item(row, 2)
+            Napr = w.table_1.table.item(row, 3)
+            if not L_item or not A_item or not Upr or not Napr:
                 QMessageBox.warning(w, "Ошибка", f"Пустое значение в строке {row + 1} таблицы 'Стержни'")
                 return False
             try:
                 L = float(L_item.text())
                 A = float(A_item.text())
+                Upr_1 = float(Upr.text())
+                Napr_1 = float(Napr.text())
                 if L <= 0 or A <= 0:
                     QMessageBox.warning(
                         w, "Ошибка",
                         f"Длина и площадь поперечного сечения должны быть > 0 (строка {row + 1})"
                     )
                     return False
+
+                if Upr_1 <= 0 or Napr_1 <= 0:
+                    QMessageBox.warning(
+                        w, "Ошибка",
+                        f"Модуль упругости и напряжение должны быть > 0 (строка {row + 1})"
+                    )
+                    return False
+
             except ValueError:
                 QMessageBox.warning(w, "Ошибка", f"Некорректное число в таблице 'Стержни' (строка {row + 1})")
                 return False
 
         # Проверяем распределенные нагрузки
+        used_bars_raspr = set()
         for row in range(w.table_2.table.rowCount()):
             bar_item = w.table_2.table.item(row, 0)
             q_item = w.table_2.table.item(row, 1)
@@ -63,7 +75,7 @@ def validate_data_on_save(w):
                 else:
                     QMessageBox.warning(
                         w, "Ошибка",
-                        f"Распределенные нагрузки' не указан стержень, "
+                        f"В таблице 'Распределенные нагрузки' не указан стержень, "
                         f"но указана сила q"
                     )
                     return False
@@ -79,9 +91,19 @@ def validate_data_on_save(w):
                     f"но всего стержней: {n_bars}"
                 )
                 return False
+            if bar_num in used_bars_raspr:
+                QMessageBox.warning(
+                    w, "Ошибка",
+                    f"На стержень №{bar_num} задано несколько распределённых нагрузок.\n"
+                    f"Допускается только одна нагрузка на стержень."
+                )
+                return False
+            used_bars_raspr.add(bar_num)
 
         # Проверяем сосредоточенные нагрузки
         n_nodes = n_bars + 1
+        used_nodes = set()  # 🔹 Для проверки дубликатов
+
         for row in range(w.table_3.table.rowCount()):
             node_item = w.table_3.table.item(row, 0)
             F_item = w.table_3.table.item(row, 1)
@@ -109,6 +131,16 @@ def validate_data_on_save(w):
                     f"но всего узлов: {n_nodes}"
                 )
                 return False
+
+            # 🔹 Проверка на дублирующиеся узлы
+            if node_num in used_nodes:
+                QMessageBox.warning(
+                    w, "Ошибка",
+                    f"Узел №{node_num} встречается несколько раз в таблице 'Сосредоточенные нагрузки'.\n"
+                    f"Допускается только одна нагрузка на узел."
+                )
+                return False
+            used_nodes.add(node_num)
 
             F_val = 0.0
             if F_item and F_item.text().strip() != "":
@@ -150,11 +182,10 @@ def validate_data_on_load(w, data):
         n_bars = len(sterzhni)
         n_nodes = n_bars + 1
 
-        # --- читаем флаги заделок из JSON, если они там есть ---
         left_fixed = bool(data.get("left_fixed", False))
         right_fixed = bool(data.get("right_fixed", False))
 
-        # Проверяем содержимое таблиц
+        # Проверяем таблицу 'Стержни'
         for row_index, row in enumerate(sterzhni):
             try:
                 L = float(row.get("bar_length", 0))
@@ -169,6 +200,8 @@ def validate_data_on_load(w, data):
                 QMessageBox.warning(w, "Ошибка", f"Некорректные данные в 'Стержнях' (строка {row_index + 1})")
                 return False
 
+        # Проверяем распределённые нагрузки
+        used_bars_raspr = set()
         for row_index, row in enumerate(raspr):
             try:
                 bar_num = int(row.get("bar_number_raspr", 0))
@@ -178,11 +211,19 @@ def validate_data_on_load(w, data):
                         f"Неверный номер стержня ({bar_num}) в распределённых нагрузках"
                     )
                     return False
-
+                if bar_num in used_bars_raspr:
+                    QMessageBox.warning(
+                        w, "Ошибка",
+                        f"В файле несколько распределённых нагрузок на стержень №{bar_num}.\n"
+                        f"Допускается только одна нагрузка на стержень."
+                    )
+                    return False
+                used_bars_raspr.add(bar_num)
             except ValueError:
                 QMessageBox.warning(w, "Ошибка", f"Некорректные данные в распределённых нагрузках (строка {row_index + 1})")
                 return False
-
+# Проверяем сосредоточенные нагрузки
+        used_nodes = set()  # 🔹 Проверка на дубликаты
         for row_index, row in enumerate(sosred):
             try:
                 node_num = int(row.get("node_number", 0))
@@ -193,11 +234,20 @@ def validate_data_on_load(w, data):
                         f"Неверный номер узла ({node_num}) в сосредоточенных нагрузках"
                     )
                     return False
+
+                # 🔹 Проверка на дубликаты узлов
+                if node_num in used_nodes:
+                    QMessageBox.warning(
+                        w, "Ошибка",
+                        f"В файле указано несколько нагрузок на один узел (№{node_num}).\n"
+                        f"Допускается только одна нагрузка на каждый узел."
+                    )
+                    return False
+                used_nodes.add(node_num)
+
             except ValueError:
                 QMessageBox.warning(w, "Ошибка", f"Некорректные данные в сосредоточенных нагрузках (строка {row_index + 1})")
                 return False
-
-
 
             if (left_fixed and node_num == 1 and abs(F_val) > 0.0) or (
                     right_fixed and node_num == n_nodes and abs(F_val) > 0.0):

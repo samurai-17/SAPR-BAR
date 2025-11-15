@@ -153,6 +153,14 @@ def validate_data_on_save(w):
             left_fixed = getattr(w, "left_fixed", False)
             right_fixed = getattr(w, "right_fixed", False)
 
+            if not any([left_fixed, right_fixed]):
+                QMessageBox.warning(
+                    w,
+                    "Ошибка",
+                    f"Должна быть как минимум одна заделка"
+                )
+                return False
+
             # запрет сохранять ненулевую силу в заделанном узле
             if (left_fixed and node_num == 1 and abs(F_val) > 0.0) or (
                     right_fixed and node_num == n_nodes and abs(F_val) > 0.0):

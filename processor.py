@@ -1,7 +1,7 @@
 # processor.py
 import numpy as np
 
-def calculate_structure(window, n_points_per_bar=5):
+def calculate_structure(window, n_points_per_bar_table=5, n_points_per_bar_graph=100):
     """
     Расчёт конструкции методом перемещений на основе таблиц окна.
     Возвращает:
@@ -101,6 +101,10 @@ def calculate_structure(window, n_points_per_bar=5):
     if len(free_dofs) == 0:
         raise ValueError("Нет свободных степеней, нет решения.")
 
+    if len(fixed_dofs) == 0:
+        raise ValueError("Конструкция механически неустойчива (матрица жёсткости вырождена). "
+                     "Добавьте хотя бы одну заделку.")
+
     # --- Решаем систему для свободных DOF ---
     K_ff = K[np.ix_(free_dofs, free_dofs)]
     b_f = b[free_dofs]
@@ -134,17 +138,14 @@ def calculate_structure(window, n_points_per_bar=5):
         q = q_loads.get(i, 0.0)
         U1 = U[i - 1]
         U2 = U[i]
-        n_pts = max(2, int(n_points_per_bar))
+        n_pts = max(2, int(n_points_per_bar_table))  # Меньше точек для таблицы
         step = L / (n_pts - 1)
 
-        # если это не первый стержень, пропускаем первую точку (чтобы не дублировать стык)
-        start_j = 0 if i == 1 else 1
-
-        for j in range(start_j, n_pts):
+        for j in range(0, n_pts):
             x_local = j * step
             x_global = total_x + x_local
 
-            # u(x) = U1 + ((U2 - U1) + qL^2/(2EA))/L * x - q/(2EA) * x^2
+            # вычисления u_x, N_x, sigma_x (остаются без изменений)
             try:
                 correction = (q / (2.0 * E * A)) * (x_local * (L - x_local)) if (E != 0 and A != 0) else 0.0
             except Exception:
@@ -166,4 +167,119 @@ def calculate_structure(window, n_points_per_bar=5):
 
         total_x += L
 
-    return {"U": U, "N": N_list, "sigma": sigma_list, "table": table_data}
+    # --- Дополнительная таблица для графиков (много точек) ---
+    graph_data = []
+    total_x = 0.0
+
+    for i, (L, A, E) in enumerate(bars, start=1):
+        q = q_loads.get(i, 0.0)
+        U1 = U[i - 1]
+        U2 = U[i]
+        n_pts = max(2, int(n_points_per_bar_graph))  # Больше точек для графиков
+        step = L / (n_pts - 1)
+
+        for j in range(0, n_pts):
+            x_local = j * step
+            x_global = total_x + x_local
+
+            # вычисления u_x, N_x, sigma_x (такие же как выше)
+            try:
+                correction = (q / (2.0 * E * A)) * (x_local * (L - x_local)) if (E != 0 and A != 0) else 0.0
+            except Exception:
+                correction = 0.0
+
+            u_linear = U1 * (1.0 - x_local / L) + U2 * (x_local / L)
+            u_x = u_linear + correction
+
+            N_x = E * A / L * (U2 - U1) + q * (L / 2.0 - x_local)
+            sigma_x = N_x / A if A != 0 else 0.0
+
+            graph_data.append({
+                "bar": i,
+                "x": float(round(x_global, 8)),
+                "u": float(u_x),
+                "N": float(N_x),
+                "sigma": float(sigma_x)
+            })
+
+        total_x += L
+
+    return {
+        "U": U,
+        "N": N_list,
+        "sigma": sigma_list,
+        "table": table_data,  # Для таблиц (мало точек)
+        "graph_table": graph_data  # Для графиков (много точек)
+    }
+
+
+def calculate_reactions(window):
+    """Вычисляет реакции в заделках после выполнения calculate_structure."""
+    try:
+
+
+        # считываем таблицу стержней
+        bars = []
+        for row in range(window.table_1.table.rowCount()):
+            try:
+                L = float(window.table_1.table.item(row, 0).text())
+                A = float(window.table_1.table.item(row, 1).text())
+                E = float(window.table_1.table.item(row, 2).text())
+                bars.append((L, A, E))
+            except Exception:
+                continue
+
+        n_nodes = len(bars) + 1
+        if n_nodes <= 1:
+            return {}
+
+        K = np.zeros((n_nodes, n_nodes))
+        b = np.zeros(n_nodes)
+
+        # распределённые нагрузки
+        q_loads = {}
+        for row in range(window.table_2.table.rowCount()):
+            try:
+                bar_num = int(window.table_2.table.item(row, 0).text())
+                q = float(window.table_2.table.item(row, 1).text())
+                q_loads[bar_num] = q
+            except Exception:
+                continue
+
+        # сборка матрицы жёсткости
+        for i, (L, A, E) in enumerate(bars):
+            k = E * A / L
+            K[i, i] += k
+            K[i, i + 1] -= k
+            K[i + 1, i] -= k
+            K[i + 1, i + 1] += k
+
+            q = q_loads.get(i + 1, 0.0)
+            b[i] += q * L / 2
+            b[i + 1] += q * L / 2
+
+        # сосредоточенные нагрузки
+        for row in range(window.table_3.table.rowCount()):
+            try:
+                node = int(window.table_3.table.item(row, 0).text())
+                F = float(window.table_3.table.item(row, 1).text())
+                b[node - 1] += F
+            except Exception:
+                continue
+
+        U = window.proc_results["U"]
+        R = np.dot(K, U) - b
+
+        left_fixed = getattr(window, "left_fixed", False)
+        right_fixed = getattr(window, "right_fixed", False)
+
+        reactions = {}
+        if left_fixed:
+            reactions[1] = R[0]
+        if right_fixed:
+            reactions[n_nodes] = R[-1]
+
+        return reactions
+    except Exception:
+        return {}
+

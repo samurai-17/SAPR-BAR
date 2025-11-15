@@ -9,7 +9,8 @@ from PyQt5 import QtGui, QtCore
 from tables import Table
 from draw_area import DrawArea
 from processor import calculate_structure  # ✅ добавили
-
+from postprocessor import PostProcessorArea
+import validators
 
 class Window(QWidget):
     def __init__(self):
@@ -73,11 +74,18 @@ class Window(QWidget):
         self.btn_calc.clicked.connect(self.run_calculation)
         layout.addWidget(self.btn_calc)
 
-        # таблица результатов (создаём пустую)
+        # таблица результатов
         self.results_table = QTableWidget()
         self.results_table.setColumnCount(5)
         self.results_table.setHorizontalHeaderLabels(["№ стержня", "x (м)", "u(x)", "N(x)", "σ(x)"])
         layout.addWidget(self.results_table)
+
+        # 🔹 текстовый блок для вывода дельт (узловых перемещений)
+        from PyQt5.QtWidgets import QTextEdit
+        self.delta_output = QTextEdit()
+        self.delta_output.setReadOnly(True)
+        self.delta_output.setMinimumHeight(80)
+        layout.addWidget(self.delta_output)
 
         self.tab_proc.setLayout(layout)
 
@@ -85,12 +93,17 @@ class Window(QWidget):
         """Расчёт конструкции и вывод таблицы результатов"""
 
         data = self.draw_area.structure_data
+        if not validators.validate_data_on_save(self):
+            QMessageBox.warning(self, "Ошибка", "Ошибки в параметрах препроцессора")
+            return
+
         if not data:
             QMessageBox.warning(self, "Ошибка", "Конструкция не построена!")
             return
 
+
         try:
-            results = calculate_structure(self)  # передаём окно, т.к. данные из таблиц
+            results = calculate_structure(self, n_points_per_bar_table=5, n_points_per_bar_graph=100)  # передаём окно, т.к. данные из таблиц
 
             rows = results["table"]
             self.results_table.setRowCount(len(rows))
@@ -102,7 +115,19 @@ class Window(QWidget):
                 self.results_table.setItem(r, 3, QTableWidgetItem(f"{row_data['N']:.6e}"))
                 self.results_table.setItem(r, 4, QTableWidgetItem(f"{row_data['sigma']:.6e}"))
 
+            self.proc_results = results  # сохраняем для постпроцессора
+            U = results["U"]
+            text_lines = ["Узловые перемещения (Δ):"]
+            for i, val in enumerate(U, start=1):
+                text_lines.append(f"Δ{i} = {val:.6e} м")
+            self.delta_output.setText("\n".join(text_lines))
+
+            self.post_area.set_data(self.draw_area.structure_data, results)
+
             QMessageBox.information(self, "Готово", "✅ Расчёт выполнен! Таблица обновлена.")
+
+
+
         except Exception as e:
             QMessageBox.critical(self, "Ошибка", f"Ошибка при расчёте:\n{e}")
 
@@ -111,9 +136,32 @@ class Window(QWidget):
     # ==========================
     def init_postprocessor_ui(self):
         layout = QVBoxLayout()
-        label = QLabel("Постпроцессор (здесь будут диаграммы N(x), σ(x))")
-        layout.addWidget(label)
+        self.post_area = PostProcessorArea(self)
+        layout.addWidget(self.post_area)
         self.tab_post.setLayout(layout)
+
+    # def show_epures(self):
+    #     if not hasattr(self, "results_table") or self.results_table.rowCount() == 0:
+    #         QMessageBox.warning(self, "Ошибка", "Сначала рассчитайте конструкцию на вкладке 'Процессор'.")
+    #         return
+    #
+    #     if not self.draw_area.structure_data:
+    #         QMessageBox.warning(self, "Ошибка", "Конструкция не построена.")
+    #         return
+    #
+    #     try:
+    #         from processor import calculate_structure
+    #         results = calculate_structure(self)
+    #         self.post_area.set_results(self.draw_area.structure_data, results)
+    #         QMessageBox.information(self, "Готово", "✅ Эпюры построены!")
+    #     except Exception as e:
+    #         QMessageBox.critical(self, "Ошибка", f"Ошибка при построении эпюр:\n{e}")
+
+    def show_post_results(self):
+        if not hasattr(self, "proc_results"):
+            QMessageBox.warning(self, "Ошибка", "Сначала выполните расчёт.")
+            return
+        self.post_area.set_data(self.draw_area.structure_data, self.proc_results)
 
     # ==========================
     #  Остальные твои функции — без изменений
@@ -209,6 +257,17 @@ class Window(QWidget):
         self.table_1.setVisible(visible)
         self.table_2.setVisible(visible)
         self.table_3.setVisible(visible)
+
+    def show_post_results(self):
+        if not hasattr(self, "results_table") or not hasattr(self, "draw_area"):
+            QMessageBox.warning(self, "Ошибка", "Нет данных для построения!")
+            return
+        if not hasattr(self, "proc_results"):
+            QMessageBox.warning(self, "Ошибка", "Сначала выполните расчёт.")
+            return
+
+        self.post_area.set_data(self.draw_area.structure_data, self.proc_results)
+
 
     def draw_construction(self):
         self.draw_area.redraw_structure()

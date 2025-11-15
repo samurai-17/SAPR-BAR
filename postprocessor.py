@@ -1,6 +1,7 @@
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QTabWidget, QTextEdit,
-    QComboBox, QTableWidget, QTableWidgetItem
+    QComboBox, QTableWidget, QTableWidgetItem, QHBoxLayout,
+    QPushButton
 )
 from PyQt5.QtCore import Qt, QTimer
 from processor import calculate_reactions
@@ -57,16 +58,14 @@ class PostProcessorArea(QWidget):
         self.tab_graphs = QWidget()
         v3 = QVBoxLayout()
 
-        # >>>>>>>>>>>>> НОВЫЙ КОД ДЛЯ ГРАФИКОВ >>>>>>>>>>>>>>
         self.combo_graph = QComboBox()
         self.combo_graph.addItems(["u(x) — Перемещения", "N(x) — Продольная сила", "σ(x) — Напряжения"])
         self.combo_graph.currentIndexChanged.connect(self.update_graphs)
         v3.addWidget(self.combo_graph)
 
-        self.figure = Figure(figsize=(12, 8))
+        self.figure = Figure(figsize=(5, 4))
         self.canvas = FigureCanvas(self.figure)
         v3.addWidget(self.canvas)
-        # <<<<<<<<<<<<< НОВЫЙ КОД ДЛЯ ГРАФИКОВ <<<<<<<<<<<<<<
 
         self.tab_graphs.setLayout(v3)
         self.tabs.addTab(self.tab_graphs, "Графики")
@@ -74,8 +73,36 @@ class PostProcessorArea(QWidget):
         # --- 4. Решение в точке ---
         self.tab_point = QWidget()
         v4 = QVBoxLayout()
-        self.point_label = QLabel("Выполните расчёт в процессоре")
-        v4.addWidget(self.point_label)
+
+        # 🔹 Выбор стержня
+        point_bar_layout = QHBoxLayout()
+        point_bar_layout.addWidget(QLabel("Стержень:"))
+        self.point_bar_combo = QComboBox()
+        self.point_bar_combo.addItem("Выберите стержень")
+        point_bar_layout.addWidget(self.point_bar_combo)
+        v4.addLayout(point_bar_layout)
+
+        # 🔹 Ввод координаты
+        point_coord_layout = QHBoxLayout()
+        point_coord_layout.addWidget(QLabel("Локальная координата x (м):"))
+        self.point_coord_input = QTextEdit()
+        self.point_coord_input.setMaximumHeight(30)
+        self.point_coord_input.setPlaceholderText("0.0")
+        point_coord_layout.addWidget(self.point_coord_input)
+        v4.addLayout(point_coord_layout)
+
+        # 🔹 Кнопка расчёта
+        self.point_calc_btn = QPushButton("Рассчитать в точке")
+        self.point_calc_btn.clicked.connect(self.calculate_at_point)
+        v4.addWidget(self.point_calc_btn)
+
+        # 🔹 Результат
+        self.point_result_label = QLabel("Выполните расчёт в процессоре")
+        self.point_result_label.setWordWrap(True)
+        self.point_result_label.setStyleSheet("padding: 10px; background-color: #f0f0f0; border-radius: 5px;")
+        v4.addWidget(self.point_result_label)
+
+        v4.addStretch(1)
         self.tab_point.setLayout(v4)
         self.tabs.addTab(self.tab_point, "Решение в точке")
 
@@ -90,6 +117,7 @@ class PostProcessorArea(QWidget):
         self.results = results
         self.update_info_tab()
         self.update_tables_tab()
+        self.update_point_calculation_tab()
         self.update_graphs()   # <<— графики обновляются сразу
 
     # =======================================================
@@ -393,4 +421,128 @@ class PostProcessorArea(QWidget):
         ax.grid(True, linestyle='--', alpha=0.6)
         ax.legend()
         self.canvas.draw()
+
+    # =======================================================
+    # ВКЛАДКА 4 — Расчёт в точке
+    # =======================================================
+
+    def update_point_calculation_tab(self):
+        """Обновляет список стержней для выбора во вкладке 'Решение в точке'"""
+        if not self.structure_data:
+            self.point_bar_combo.clear()
+            self.point_bar_combo.addItem("Выберите стержень")
+            return
+
+        bars = self.structure_data.get("bars", [])
+        self.point_bar_combo.blockSignals(True)
+        self.point_bar_combo.clear()
+        self.point_bar_combo.addItem("Выберите стержень")
+        for i in range(len(bars)):
+            self.point_bar_combo.addItem(f"Стержень {i + 1}")
+        self.point_bar_combo.blockSignals(False)
+
+    def calculate_at_point(self):
+        """Вычисляет значения в заданной точке стержня"""
+        if not self.results or not self.structure_data:
+            self.point_result_label.setText("Сначала выполните расчёт в процессоре")
+            return
+
+        try:
+            # Получаем выбранный стержень
+            selected_bar_text = self.point_bar_combo.currentText()
+            if selected_bar_text == "Выберите стержень":
+                self.point_result_label.setText("Выберите стержень")
+                return
+
+            bar_num = int(selected_bar_text.split()[-1])
+
+            # Получаем координату
+            coord_text = self.point_coord_input.toPlainText().strip()
+            if not coord_text:
+                self.point_result_label.setText("Введите координату")
+                return
+
+            x_local = float(coord_text)
+
+            # Проверяем корректность координаты
+            bars = self.structure_data.get("bars", [])
+            if bar_num < 1 or bar_num > len(bars):
+                self.point_result_label.setText("Неверный номер стержня")
+                return
+
+            L = float(bars[bar_num - 1][0])
+            if x_local < 0 or x_local > L:
+                self.point_result_label.setText(f"Координата должна быть в пределах [0, {L:.3f}] м")
+                return
+
+            # Вычисляем глобальную координату
+            total_x = 0.0
+            for i in range(bar_num - 1):
+                total_x += float(bars[i][0])
+            x_global = total_x + x_local
+
+            # Ищем ближайшую точку в результатах или интерполируем
+            result = self._get_values_at_point(bar_num, x_global, x_local)
+
+            # Форматируем результат
+            result_text = (
+                f"<b>Результаты в точке:</b><br>"
+                f"Стержень: {bar_num}<br>"
+                f"Локальная координата: {x_local:.4f} м<br>"
+                f"Глобальная координата: {x_global:.4f} м<br><br>"
+                f"<b>Значения:</b><br>"
+                f"• Перемещение u(x) = {result['u']:.6e} м<br>"
+                f"• Продольная сила N(x) = {result['N']:.6e} Н<br>"
+                f"• Напряжение σ(x) = {result['sigma']:.6e} Па"
+            )
+
+            self.point_result_label.setText(result_text)
+
+        except ValueError:
+            self.point_result_label.setText("Ошибка: некорректная координата")
+        except Exception as e:
+            self.point_result_label.setText(f"Ошибка расчёта: {str(e)}")
+
+    def _get_values_at_point(self, bar_num, x_global, x_local):
+        """Возвращает значения в заданной точке (интерполяция при необходимости)"""
+        # Ищем точку в таблице результатов
+        for row in self.results.get("table", []):
+            if (int(row.get("bar", 0)) == bar_num and
+                    abs(float(row.get("x", 0)) - x_global) < 1e-9):
+                return row
+
+        # Если точка не найдена, интерполируем
+        return self._interpolate_at_point(bar_num, x_global, x_local)
+
+    def _interpolate_at_point(self, bar_num, x_global, x_local):
+        """Интерполирует значения в заданной точке"""
+        # Собираем все точки стержня
+        bar_points = []
+        for row in self.results.get("table", []):
+            if int(row.get("bar", 0)) == bar_num:
+                bar_points.append(row)
+
+        if len(bar_points) < 2:
+            raise ValueError("Недостаточно точек для интерполяции")
+
+        # Сортируем по координате
+        bar_points.sort(key=lambda r: float(r["x"]))
+
+        # Линейная интерполяция
+        xs = [float(r["x"]) for r in bar_points]
+        us = [float(r["u"]) for r in bar_points]
+        Ns = [float(r["N"]) for r in bar_points]
+        sigmas = [float(r["sigma"]) for r in bar_points]
+
+        u_interp = np.interp(x_global, xs, us)
+        N_interp = np.interp(x_global, xs, Ns)
+        sigma_interp = np.interp(x_global, xs, sigmas)
+
+        return {
+            "bar": bar_num,
+            "x": float(x_global),
+            "u": float(u_interp),
+            "N": float(N_interp),
+            "sigma": float(sigma_interp)
+        }
 

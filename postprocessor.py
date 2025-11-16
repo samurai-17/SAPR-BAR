@@ -1,16 +1,20 @@
+import os
+from reportlab.platypus import Table, TableStyle, Paragraph, Spacer, Image, PageBreak
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib import colors
+import tempfile
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QTabWidget, QTextEdit,
     QComboBox, QTableWidget, QTableWidgetItem, QHBoxLayout,
-    QPushButton
+    QPushButton, QFileDialog, QMessageBox,
 )
 from PyQt5.QtCore import Qt, QTimer
 from processor import calculate_reactions
 import numpy as np
 
-# >>>>>>>>>>>>> НОВЫЙ КОД ДЛЯ ГРАФИКОВ >>>>>>>>>>>>>>
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
-# <<<<<<<<<<<<< НОВЫЙ КОД ДЛЯ ГРАФИКОВ <<<<<<<<<<<<<<
+
 
 
 class PostProcessorArea(QWidget):
@@ -30,6 +34,25 @@ class PostProcessorArea(QWidget):
         self.info_text.setReadOnly(True)
         self.info_text.setAlignment(Qt.AlignTop)
         v1.addWidget(self.info_text)
+
+        # 🔹 КНОПКА ФОРМИРОВАНИЯ ОТЧЕТА PDF
+        self.report_button = QPushButton("📊 Сформировать отчет (PDF)")
+        self.report_button.clicked.connect(self.generate_pdf_report)
+        self.report_button.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                font-weight: bold;
+                padding: 10px;
+                border-radius: 5px;
+                font-size: 12pt;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+        """)
+        v1.addWidget(self.report_button)
+
         self.tab_info.setLayout(v1)
         self.tabs.addTab(self.tab_info, "Расчётная информация")
 
@@ -50,6 +73,27 @@ class PostProcessorArea(QWidget):
         self.table_widget.setColumnCount(5)
         self.table_widget.setHorizontalHeaderLabels(["№ стержня", "x (м)", "u(x)", "N(x)", "σ(x)"])
         v2.addWidget(self.table_widget)
+
+        # 🔹 Область для проверки прочности (добавляем под таблицей)
+        self.safety_check_widget = QWidget()
+        safety_layout = QVBoxLayout()
+        self.safety_check_widget.setLayout(safety_layout)
+
+        # Заголовок проверки прочности
+        self.safety_title = QLabel("Проверка прочности:")
+        self.safety_title.setStyleSheet("font-weight: bold; font-size: 12pt; margin-top: 10px;")
+        safety_layout.addWidget(self.safety_title)
+
+        # Текст с результатами
+        self.safety_result = QLabel("")
+        self.safety_result.setWordWrap(True)
+        self.safety_result.setStyleSheet("padding: 10px; border-radius: 5px; font-size: 11pt;")
+        self.safety_result.setMinimumHeight(80)
+        safety_layout.addWidget(self.safety_result)
+
+        # Сначала скрываем область проверки прочности
+        self.safety_check_widget.setVisible(False)
+        v2.addWidget(self.safety_check_widget)
 
         self.tab_tables.setLayout(v2)
         self.tabs.addTab(self.tab_tables, "Таблицы")
@@ -160,6 +204,442 @@ class PostProcessorArea(QWidget):
         except Exception as e:
             self.info_text.setText(f"Ошибка:\n{e}")
 
+    def generate_pdf_report(self):
+        """Формирует отчет в PDF с правильной кодировкой"""
+        if not self.results or not self.structure_data:
+            QMessageBox.warning(self, "Ошибка", "Сначала выполните расчёт в процессоре!")
+            return
+
+        temp_files = []
+
+        try:
+            options = QFileDialog.Options()
+            file_name, _ = QFileDialog.getSaveFileName(
+                self, "Сохранить отчет PDF", "отчет.pdf", "PDF Files (*.pdf)", options=options
+            )
+
+            if not file_name:
+                return
+
+            # Сохраняем конструкцию и графики
+            structure_image = self._save_structure_simple()
+            if structure_image:
+                temp_files.append(structure_image)
+
+            graph_files = self._save_graphs_simple()
+            temp_files.extend(graph_files)
+
+            # Создаем PDF с правильной кодировкой
+            from reportlab.lib.pagesizes import A4
+            from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+            from reportlab.lib.styles import getSampleStyleSheet
+            from reportlab.lib import colors
+            from reportlab.pdfbase import pdfmetrics
+            from reportlab.pdfbase.ttfonts import TTFont
+
+            doc = SimpleDocTemplate(file_name, pagesize=A4)
+            elements = []
+
+            # РЕГИСТРИРУЕМ ШРИФТ С ПОДДЕРЖКОЙ КИРИЛЛИЦЫ
+            try:
+                # Пробуем разные шрифты с кириллицей
+                font_paths = [
+                    'C:/Windows/Fonts/arial.ttf',  # Windows
+                    '/usr/share/fonts/truetype/freefont/FreeSans.ttf',  # Linux
+                    '/Library/Fonts/Arial.ttf',  # Mac
+                    'arial.ttf'
+                ]
+
+                font_registered = False
+                for font_path in font_paths:
+                    try:
+                        pdfmetrics.registerFont(TTFont('ArialUnicode', font_path))
+                        font_name = 'ArialUnicode'
+                        font_registered = True
+                        break
+                    except:
+                        continue
+
+                if not font_registered:
+                    # Если не нашли шрифт, используем стандартный
+                    font_name = 'Helvetica'
+            except:
+                font_name = 'Helvetica'
+
+            # Создаем стили с правильным шрифтом
+            styles = getSampleStyleSheet()
+
+            # Переопределяем стили с нашим шрифтом
+            title_style = ParagraphStyle(
+                'Title',
+                parent=styles['Heading1'],
+                fontName=font_name,
+                fontSize=16,
+                spaceAfter=30,
+                alignment=1,
+                textColor=colors.HexColor('#2c3e50')
+            )
+
+            heading2_style = ParagraphStyle(
+                'Heading2',
+                parent=styles['Heading2'],
+                fontName=font_name,
+                fontSize=14,
+                spaceAfter=12,
+                textColor=colors.HexColor('#2c3e50')
+            )
+
+            heading3_style = ParagraphStyle(
+                'Heading3',
+                parent=styles['Heading3'],
+                fontName=font_name,
+                fontSize=12,
+                spaceAfter=8,
+                textColor=colors.HexColor('#34495e')
+            )
+
+            normal_style = ParagraphStyle(
+                'Normal',
+                parent=styles['Normal'],
+                fontName=font_name,
+                fontSize=10,
+                spaceAfter=6
+            )
+
+            # Заголовок - используем Unicode символы напрямую
+            elements.append(Paragraph("ОТЧЕТ ПО РАСЧЕТУ КОНСТРУКЦИИ", title_style))
+            elements.append(Spacer(1, 20))
+
+            # 1. Таблицы препроцессора
+            elements.append(Paragraph("1. ТАБЛИЦЫ ИЗ ПРЕПРОЦЕССОРА", heading2_style))
+            elements.append(Spacer(1, 10))
+
+            # Таблица стержней
+            elements.append(Paragraph("Стержни", heading3_style))
+            elements.append(Spacer(1, 5))
+
+            table_number_style = ParagraphStyle(
+                'TableNumber',
+                parent=normal_style,
+                alignment=2,  # 2 = RIGHT
+                fontSize=9,
+                spaceAfter=5
+            )
+            elements.append(Paragraph("Таблица 1", table_number_style))  # НОМЕР ТАБЛИЦЫ СПРАВА
+
+            # Используем простые заголовки для теста
+            table1_data = [["№", "Длина, м", "Поперечное сечение, м²", "Модуль упругости, Па", "Напряжение σ, Па"]]
+            table_1 = self.parent_window.table_1.table
+            for row in range(table_1.rowCount()):
+                row_data = [str(row + 1)]
+                for col in range(table_1.columnCount()):
+                    item = table_1.item(row, col)
+                    row_data.append(item.text() if item else "0")
+                table1_data.append(row_data)
+
+            table1 = Table(table1_data, colWidths=[30, 70, 90, 110, 90])
+            table1.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3498db')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), font_name),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
+                ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f8f9fa')),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ]))
+            elements.append(table1)
+            elements.append(Spacer(1, 15))
+
+            # Таблица распределенных нагрузок
+            elements.append(Paragraph("Распределенные нагрузки", heading3_style))
+            elements.append(Spacer(1, 5))
+            elements.append(Paragraph("Таблица 2", table_number_style))  # НОМЕР ТАБЛИЦЫ СПРАВА
+
+            table2_data = [["Стержень", "q, Н/м"]]
+            table_2 = self.parent_window.table_2.table
+            for row in range(table_2.rowCount()):
+                row_data = []
+                for col in range(table_2.columnCount()):
+                    item = table_2.item(row, col)
+                    row_data.append(item.text() if item else "")
+                if any(row_data):
+                    table2_data.append(row_data)
+
+            table2 = Table(table2_data, colWidths=[70, 80])
+            table2.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#e67e22')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), font_name),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#fef9e7')),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ]))
+            elements.append(table2)
+            elements.append(Spacer(1, 15))
+
+            # Таблица сосредоточенных нагрузок
+            elements.append(Paragraph("Сосредоточенные нагрузки", heading3_style))
+            elements.append(Spacer(1, 5))
+            elements.append(Paragraph("Таблица 3", table_number_style))  # НОМЕР ТАБЛИЦЫ СПРАВА
+
+            table3_data = [["Узел", "F, Н"]]
+            table_3 = self.parent_window.table_3.table
+            for row in range(table_3.rowCount()):
+                row_data = []
+                for col in range(table_3.columnCount()):
+                    item = table_3.item(row, col)
+                    row_data.append(item.text() if item else "")
+                if any(row_data):
+                    table3_data.append(row_data)
+
+            table3 = Table(table3_data, colWidths=[70, 80])
+            table3.setStyle(TableStyle([
+                ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#9b59b6')),
+                ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                ('FONTNAME', (0, 0), (-1, 0), font_name),
+                ('FONTSIZE', (0, 0), (-1, -1), 8),
+                ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f4ecf7')),
+                ('GRID', (0, 0), (-1, -1), 1, colors.black),
+            ]))
+            elements.append(table3)
+            elements.append(Spacer(1, 20))
+
+            # 2. Опоры
+            elements.append(Paragraph("2. ИНФОРМАЦИЯ ОБ ОПОРАХ", heading2_style))
+            elements.append(Spacer(1, 10))
+
+            left_fixed = getattr(self.parent_window, "left_fixed", False)
+            right_fixed = getattr(self.parent_window, "right_fixed", False)
+
+            # Простые предложения вместо таблицы
+            left_support_type = "жесткая заделка" if left_fixed else "отсутствует"
+            right_support_type = "жесткая заделка" if right_fixed else "отсутствует"
+
+            elements.append(Paragraph(f"• Левая опора: {left_support_type}", normal_style))
+            elements.append(Spacer(1, 5))
+            elements.append(Paragraph(f"• Правая опора: {right_support_type}", normal_style))
+
+            elements.append(PageBreak())
+
+            # 3. Конструкция
+            elements.append(Paragraph("3. КОНСТРУКЦИЯ", heading2_style))
+            elements.append(Spacer(1, 10))
+
+            if structure_image and os.path.exists(structure_image):
+                try:
+                    structure_img = Image(structure_image, width=600, height=400)
+                    elements.append(structure_img)
+                    elements.append(Spacer(1, 5))
+                    # Подпись по центру
+                    caption_style = ParagraphStyle(
+                        'Caption',
+                        parent=normal_style,
+                        alignment=1,  # 1 = CENTER
+                        fontSize=9,
+                        spaceBefore=5,
+                        spaceAfter=10
+                    )
+                    elements.append(Paragraph("Рис. 1 - Схема конструкции", caption_style))
+                except Exception as e:
+                    print(f"Ошибка вставки конструкции: {e}")
+                    elements.append(Paragraph("Схема конструкции", normal_style))
+            else:
+                elements.append(Paragraph("Схема конструкции", normal_style))
+
+            elements.append(PageBreak())
+
+            # 4. Результаты по стержням
+            elements.append(Paragraph("4. РЕЗУЛЬТАТЫ", heading2_style))
+            elements.append(Spacer(1, 10))
+
+            bars = self.structure_data.get("bars", [])
+            all_rows = self.results.get("table", [])
+
+            table_counter = 4  # Начинаем с таблицы 4
+
+            for bar_num in range(1, len(bars) + 1):
+                elements.append(Paragraph(f"Стержень {bar_num}", heading3_style))
+                elements.append(Spacer(1, 5))
+                elements.append(Paragraph(f"Таблица {table_counter}", table_number_style))
+
+                bar_rows = [r for r in all_rows if int(r.get("bar", 0)) == bar_num]
+                if bar_rows:
+                    table_data = [["x, м", "u(x), м", "N(x), Н", "σ(x), Па"]]
+
+                    points_to_show = [0]
+                    if len(bar_rows) > 2:
+                        points_to_show.append(len(bar_rows) // 2)
+                    if len(bar_rows) > 1:
+                        points_to_show.append(len(bar_rows) - 1)
+                    if len(bar_rows) > 4:
+                        points_to_show.extend([1, len(bar_rows) - 2])
+
+                    for point_idx in sorted(set(points_to_show))[:5]:
+                        if point_idx < len(bar_rows):
+                            row = bar_rows[point_idx]
+                            table_data.append([
+                                f"{row['x']:.4f}",
+                                f"{row['u']:.2e}",
+                                f"{row['N']:.2e}",
+                                f"{row['sigma']:.2e}"
+                            ])
+
+                    bar_table = Table(table_data, colWidths=[70, 100, 100, 100])
+                    bar_table.setStyle(TableStyle([
+                        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#27ae60')),
+                        ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+                        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+                        ('FONTNAME', (0, 0), (-1, 0), font_name),
+                        ('FONTSIZE', (0, 0), (-1, -1), 8),
+                        ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
+                        ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#e8f6f3')),
+                        ('GRID', (0, 0), (-1, -1), 0.5, colors.grey),
+                    ]))
+                    elements.append(bar_table)
+                    elements.append(Spacer(1, 15))
+                    table_counter += 1
+
+            elements.append(PageBreak())
+
+            # 5. Графики
+            elements.append(Paragraph("5. ГРАФИКИ", heading2_style))
+            elements.append(Spacer(1, 10))
+
+            graph_types = ["Перемещения u(x)", "Силы N(x)", "Напряжения σ(x)"]
+            figure_counter = 2  # Начинаем с рисунка 2 (рисунок 1 - это конструкция)
+
+            for i, (graph_type, graph_file) in enumerate(zip(graph_types, graph_files)):
+                if graph_file and os.path.exists(graph_file):
+                    try:
+                        elements.append(Paragraph(graph_type, heading3_style))
+                        elements.append(Spacer(1, 5))
+
+                        graph_img = Image(graph_file, width=400, height=250)
+                        elements.append(graph_img)
+                        elements.append(Spacer(1, 20))
+
+                        # ПОДПИСЬ ГРАФИКА
+                        caption_style = ParagraphStyle(
+                            'Caption',
+                            parent=normal_style,
+                            alignment=1,  # CENTER
+                            fontSize=9,
+                            spaceBefore=5,
+                            spaceAfter=10
+                        )
+                        elements.append(Paragraph(f"Рис. {figure_counter} - {graph_type}", caption_style))
+                        elements.append(Spacer(1, 15))
+
+                        figure_counter += 1  # Увеличиваем счетчик для следующего рисунка
+
+                        if graph_type == "Перемещения u(x)":
+                            elements.append(PageBreak())
+
+                    except Exception as e:
+                        print(f"Ошибка вставки графика: {e}")
+
+            # Собираем PDF
+            doc.build(elements)
+
+            QMessageBox.information(self, "Успех", f"PDF отчет сохранен в:\n{file_name}")
+
+        except Exception as e:
+            QMessageBox.critical(self, "Ошибка", f"Ошибка при формировании PDF отчета:\n{str(e)}")
+        finally:
+            # Удаляем временные файлы
+            for temp_file in temp_files:
+                try:
+                    if os.path.exists(temp_file):
+                        os.unlink(temp_file)
+                except:
+                    pass
+
+    def _save_structure_simple(self):
+        """ПРОСТОЙ метод сохранения конструкции"""
+        try:
+            draw_area = self.parent_window.draw_area
+
+            # Просто захватываем виджет
+            pixmap = draw_area.grab()
+
+            temp_file = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+            temp_file.close()
+
+            success = pixmap.save(temp_file.name, 'PNG')
+
+            if success:
+                return temp_file.name
+            return None
+
+        except Exception as e:
+            print(f"Ошибка сохранения конструкции: {e}")
+            return None
+
+    def _create_structure_section(self, heading2_style, structure_image):
+        """Раздел с конструкцией"""
+        elements = []
+
+        elements.append(Paragraph("3. КОНСТРУКЦИЯ", heading2_style))
+        elements.append(Spacer(1, 10))
+
+        try:
+            # Увеличиваем размер изображения
+            structure_img = Image(structure_image, width=500, height=300)  # Больший размер
+            elements.append(structure_img)
+            elements.append(Spacer(1, 5))
+            elements.append(Paragraph("Рис. 1 - Расчетная схема конструкции",
+                                      ParagraphStyle('Caption', fontSize=9, alignment=1)))
+
+        except Exception as e:
+            elements.append(Paragraph(f"Не удалось загрузить изображение конструкции: {str(e)}",
+                                      ParagraphStyle('Normal', fontSize=10)))
+
+        return elements
+
+    def _save_graphs_simple(self):
+        """ПРОСТОЙ метод сохранения графиков"""
+        graph_files = []
+        graph_types = ["u(x) — Перемещения", "N(x) — Продольная сила", "σ(x) — Напряжения"]
+
+        for i, graph_type in enumerate(graph_types):
+            try:
+                self.combo_graph.setCurrentIndex(i)
+                self.update_graphs()
+
+                ax = self.figure.axes[0]
+
+                # Фиксируем легенду в правом верхнем углу
+                if ax.get_legend():
+                    legend = ax.get_legend()
+                    legend.set_bbox_to_anchor((0.98, 0.98))  # Право-верх с небольшим отступом
+                    legend.set_loc('upper left')
+
+                # Увеличиваем размер для сохранения
+                original_size = self.figure.get_size_inches()
+                self.figure.set_size_inches(12, 8)
+
+                temp_file = tempfile.NamedTemporaryFile(suffix='.png', delete=False)
+
+                self.figure.savefig(temp_file.name,
+                                    dpi=200,
+                                    bbox_inches='tight',
+                                    facecolor='white')
+
+                # Возвращаем размер
+                self.figure.set_size_inches(original_size)
+                self.canvas.draw()
+
+                temp_file.close()
+                graph_files.append(temp_file.name)
+
+            except Exception as e:
+                print(f"Ошибка сохранения графика {graph_type}: {e}")
+
+        return graph_files
+
     # =======================================================
     # ВКЛАДКА 2 — Таблицы
     # =======================================================
@@ -183,6 +663,7 @@ class PostProcessorArea(QWidget):
     def update_table_view(self):
         """Обновляет отображение таблицы при выборе стержня"""
         if not self.results or "table" not in self.results or not self.structure_data:
+            self.safety_check_widget.setVisible(False)
             return
 
         try:
@@ -193,32 +674,37 @@ class PostProcessorArea(QWidget):
             if selected.startswith("Стержень"):
                 bar_num = int(selected.split()[-1])
 
-                # вычисляем границы выбранного стержня (глобальные x)
+                # Вычисляем границы ВСЕХ стержней
+                bar_boundaries = []
                 total_x = 0.0
-                start_x = 0.0
-                end_x = 0.0
                 for i, bar_data in enumerate(bars, start=1):
                     try:
                         L = float(bar_data[0])
                     except Exception:
                         L = 0.0
-                    if i == bar_num:
-                        start_x = total_x
-                        end_x = total_x + L
-                        break
+                    bar_boundaries.append((i, total_x, total_x + L))
                     total_x += L
 
-                # выбираем строки из сводной таблицы, принадлежащие этому стержню
+                # Находим границы выбранного стержня
+                start_x, end_x = 0.0, 0.0
+                for bar_info in bar_boundaries:
+                    if bar_info[0] == bar_num:
+                        start_x, end_x = bar_info[1], bar_info[2]
+                        break
+
+                # Собираем точки для этого стержня
                 rows = []
                 for r in all_rows:
                     try:
-                        if int(r.get("bar", 0)) != bar_num:
-                            continue
                         xg = float(r.get("x", 0.0))
+                        current_bar = int(r.get("bar", 0))
                     except Exception:
                         continue
-                    # убедимся, что точка лежит внутри границ стержня (глобально)
-                    if abs(xg - start_x) < 1e-9 or abs(xg - end_x) < 1e-9 or (xg > start_x and xg < end_x):
+
+                    # Точка принадлежит стержню если:
+                    if ((abs(xg - start_x) < 1e-9 or abs(xg - end_x) < 1e-9 or
+                         (xg > start_x and xg < end_x)) and
+                            current_bar == bar_num):
                         rows.append({
                             "bar": bar_num,
                             "x": float(xg),
@@ -227,18 +713,27 @@ class PostProcessorArea(QWidget):
                             "sigma": float(r.get("sigma", 0.0))
                         })
 
-                # интерполируем до минимум 10 точек для таблицы (как раньше), но передаём bar_num
+                # Если точек мало - интерполируем
                 rows = self._ensure_min_points(rows, min_points=10, bar_num=bar_num)
-            else:
-                # сводная таблица: показываем всё (не меняем номера)
-                rows = all_rows
 
-            self._fill_table(rows)
+                # Заполняем таблицу
+                self._fill_table(rows)
+
+                # Показываем проверку прочности
+                self._show_safety_check(rows, bar_num)
+
+            else:
+                # Сводная таблица - скрываем проверку прочности
+                rows = all_rows
+                self._fill_table(rows)
+                self.safety_check_widget.setVisible(False)
 
         except Exception as e:
             print(f"[Ошибка при обновлении таблицы] {e}")
+            self.safety_check_widget.setVisible(False)
 
     def _fill_table(self, rows):
+        """Заполняет таблицу без проверки прочности (для сводной таблицы)"""
         self.table_widget.blockSignals(True)
         self.table_widget.clearContents()
         self.table_widget.setRowCount(0)
@@ -257,6 +752,77 @@ class PostProcessorArea(QWidget):
             self.table_widget.setItem(i, 4, QTableWidgetItem(f"{r['sigma']:.6e}"))
 
         self.table_widget.blockSignals(False)
+
+    def _show_safety_check(self, rows, bar_num):
+        """Показывает проверку прочности под таблицей"""
+        if not rows:
+            self.safety_check_widget.setVisible(False)
+            return
+
+        # Находим максимальные по модулю значения для этого стержня
+        max_N = max(abs(row["N"]) for row in rows)
+        max_sigma = max(abs(row["sigma"]) for row in rows)
+
+        # Получаем допустимое напряжение для этого стержня из препроцессора
+        allowed_sigma = self._get_allowed_sigma_for_bar(bar_num)
+
+        if allowed_sigma is None:
+            self.safety_title.setText("Проверка прочности:")
+            self.safety_result.setText("Допускаемое напряжение не задано в препроцессоре")
+            self.safety_result.setStyleSheet(
+                "padding: 10px; background-color: #fff3cd; border-radius: 5px; color: #856404;")
+            self.safety_check_widget.setVisible(True)
+            return
+
+        # Проверяем прочность
+        is_safe = max_sigma <= abs(allowed_sigma)
+        safety_factor = abs(allowed_sigma) / max_sigma if max_sigma != 0 else float('inf')
+
+        # Форматируем текст как на картинке
+        safety_text = (
+            f"<b>Проверка прочности стержня {bar_num}:</b><br>"
+            f"Максимальное напряжение: {max_sigma:.6f}<br>"
+            f"Допускаемое напряжение: {abs(allowed_sigma):.6f}<br>"
+        )
+
+        if is_safe:
+            safety_text += f"<b style='color: green;'>ПРОЧНОСТЬ ОБЕСПЕЧЕНА</b><br>"
+            bg_color = "#d4edda"
+            text_color = "#155724"
+        else:
+            safety_text += f"<b style='color: red;'>ПРОЧНОСТЬ НЕ ОБЕСПЕЧЕНА</b><br>"
+            bg_color = "#f8d7da"
+            text_color = "#721c24"
+
+        safety_text += f"Коэффициент запаса: {safety_factor:.3f}"
+
+        # Обновляем виджеты
+        self.safety_title.setText(f"Проверка прочности стержня {bar_num}:")
+        self.safety_result.setText(safety_text)
+        self.safety_result.setStyleSheet(f"""
+            padding: 15px; 
+            background-color: {bg_color}; 
+            border-radius: 8px; 
+            color: {text_color};
+            border: 1px solid {text_color}20;
+            font-size: 11pt;
+        """)
+        self.safety_check_widget.setVisible(True)
+
+    def _get_allowed_sigma_for_bar(self, bar_num):
+        """Получает допустимое напряжение для стержня из таблицы препроцессора"""
+        try:
+            # В таблице стержней (table_1) допустимое напряжение находится в 4-м столбце (индекс 3)
+            table_1 = self.parent_window.table_1.table
+
+            for row in range(table_1.rowCount()):
+                if row + 1 == bar_num:  # Нумерация стержней с 1
+                    sigma_item = table_1.item(row, 3)  # 4-й столбец - напряжение
+                    if sigma_item and sigma_item.text().strip():
+                        return float(sigma_item.text())
+            return None
+        except Exception:
+            return None
 
     def _ensure_min_points(self, rows, min_points=10, bar_num=None):
         """Если в таблице меньше min_points строк, интерполирует значения.
@@ -306,7 +872,7 @@ class PostProcessorArea(QWidget):
     def update_graphs(self):
         """
         Построение графиков из данных graph_table (100 точек на стержень)
-        с подписью крайних точек
+        с подписью крайних точек и автоматическим логарифмическим масштабированием
         """
         if not self.results or not self.structure_data:
             self.figure.clear()
@@ -331,6 +897,11 @@ class PostProcessorArea(QWidget):
                   "tab:pink", "tab:olive", "tab:cyan"]
 
         total_x = 0.0
+        all_ys = []  # Для сбора всех значений Y для анализа масштаба
+        all_xs = []  # Для сбора всех значений X для анализа масштаба
+
+        # Сначала соберем все данные для анализа масштабов
+        bar_data_points = []
         for bar_index, bar_data in enumerate(bars, start=1):
             try:
                 L = float(bar_data[0])
@@ -352,13 +923,60 @@ class PostProcessorArea(QWidget):
                 if abs(xg - start_x) < 1e-9 or abs(xg - end_x) < 1e-9 or (xg > start_x and xg < end_x):
                     bar_points.append(r)
 
-            if not bar_points:
-                total_x += L
-                continue
+            if bar_points:
+                # Сортируем по x
+                bar_points.sort(key=lambda r: r["x"])
+                bar_data_points.append((bar_index, bar_points, start_x, end_x, L))
 
-            # Сортируем по x
-            bar_points.sort(key=lambda r: r["x"])
+                # Собираем координаты для анализа масштаба
+                xs = [row["x"] for row in bar_points]
+                all_xs.extend(xs)
 
+                if selected == 0:
+                    ys = [row["u"] for row in bar_points]
+                elif selected == 1:
+                    ys = [row["N"] for row in bar_points]
+                else:
+                    ys = [row["sigma"] for row in bar_points]
+                all_ys.extend(ys)
+
+            total_x += L
+
+        # 🔹 АВТОМАТИЧЕСКОЕ МАСШТАБИРОВАНИЕ ПО ОСИ X
+        x_log_scale = False
+        if all_xs:
+            x_range = max(all_xs) - min(all_xs)
+            x_max_abs = max(abs(min(all_xs)), abs(max(all_xs)))
+
+            # Если диапазон по X очень большой (например, 1 и 1e12) - логарифмический масштаб
+            if x_range > 1e3:  # Если разброс больше миллиона
+                ax.set_xscale('log')
+                xlabel = "x, м (лог. масштаб)"
+                x_log_scale = True
+            else:
+                xlabel = "x, м (глобальная координата)"
+                x_log_scale = False
+
+        # 🔹 АВТОМАТИЧЕСКОЕ МАСШТАБИРОВАНИЕ ПО ОСИ Y
+        ylabel_suffix = ""
+        if all_ys:
+            # Проверяем диапазон значений для определения необходимости логарифмического масштаба
+            max_abs_val = max(abs(min(all_ys)), abs(max(all_ys))) if all_ys else 1
+            non_zero_ys = [abs(y) for y in all_ys if abs(y) > 1e-15]
+            min_abs_nonzero = min(non_zero_ys) if non_zero_ys else max_abs_val
+
+            # Если диапазон значений превышает 4 порядка - используем логарифмический масштаб
+            if non_zero_ys and (max_abs_val / min_abs_nonzero > 1e4):
+                ax.set_yscale('symlog', linthresh=min_abs_nonzero * 10)
+                ylabel_suffix = " (симм. лог. масштаб)"
+            else:
+                # Если значения очень маленькие или очень большие - используем научную нотацию
+                if max_abs_val < 1e-3 or max_abs_val > 1e6:
+                    ax.ticklabel_format(axis='y', style='sci', scilimits=(-3, 3))
+                ylabel_suffix = ""
+
+        # Теперь рисуем графики с учетом выбранного масштаба
+        for bar_index, bar_points, start_x, end_x, L in bar_data_points:
             xs = [row["x"] for row in bar_points]
             if selected == 0:
                 ys = [row["u"] for row in bar_points]
@@ -382,7 +1000,7 @@ class PostProcessorArea(QWidget):
             ax.plot(xs, ys, color=color, linewidth=1.2, label=f"Стержень {bar_index}")
             ax.fill_between(xs, ys, 0, color=color, alpha=0.25)
 
-            # 🔹 ПОДПИСИ КРАЙНИХ ТОЧЕК
+            # 🔹 ПОДПИСИ КРАЙНИХ ТОЧЕК - ВСЕГДА для всех стержней
             if len(bar_points) >= 2:
                 # Первая точка (начало стержня)
                 first_point = bar_points[0]
@@ -413,13 +1031,28 @@ class PostProcessorArea(QWidget):
                 # 🔹 Точки маркеры для наглядности
                 ax.scatter([x1, x2], [y1, y2], color=color, s=30, zorder=5)
 
-            total_x += L
-
-        ax.set_xlabel("x, м (глобальная координата)")
-        ax.set_ylabel(ylabel if 'ylabel' in locals() else "")
+        # Устанавливаем подписи осей
+        ax.set_xlabel(xlabel if 'xlabel' in locals() else "x, м")
+        ax.set_ylabel(ylabel + ylabel_suffix if 'ylabel' in locals() else "")
         ax.set_title(title if 'title' in locals() else "")
         ax.grid(True, linestyle='--', alpha=0.6)
         ax.legend()
+
+        # 🔹 Добавляем информацию о масштабе
+        scale_info = []
+        if ax.get_xscale() == 'log':
+            scale_info.append("Лог. масштаб по X")
+        if ax.get_yscale() == 'symlog':
+            scale_info.append("Симм. лог. масштаб по Y")
+        elif ax.get_yscale() == 'log':
+            scale_info.append("Лог. масштаб по Y")
+
+        if scale_info:
+            ax.text(0.02, 0.98, "\n".join(scale_info),
+                    transform=ax.transAxes, fontsize=8,
+                    bbox=dict(boxstyle="round,pad=0.3", facecolor='yellow', alpha=0.7),
+                    verticalalignment='top')
+
         self.canvas.draw()
 
     # =======================================================

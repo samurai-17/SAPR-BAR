@@ -44,7 +44,7 @@ class Window(QWidget):
         self.setWindowTitle("WASUPR")
         icon = QtGui.QIcon("image/chekanin_photo1.png")
         self.setWindowIcon(icon)
-        self.resize(1280, 720)
+        self.resize(1320, 720)
 
     # ==========================
     #  ПРЕПРОЦЕССОР

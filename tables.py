@@ -20,10 +20,20 @@ class Table(QTableWidget):
         self.setHorizontalHeaderLabels(hor_lab)
         self.setVerticalHeaderLabels(ver_lab)
         header_h = self.horizontalHeader()
-        header_h.setSectionResizeMode(QHeaderView.Stretch)
+        # header_h.setSectionResizeMode(QHeaderView.Stretch)
 
         if title == "Стержни":
             self.setItemDelegate(TablesDelegate(self, is_int=False, is_positive=True))
+            self.setColumnWidth(0, 100)  # Длина(L)
+            self.setColumnWidth(1, 150)  # Поперечное сечение(A)
+            self.setColumnWidth(2, 150)  # Модуль упругости(E)
+            self.setColumnWidth(3, 125)  # Напряжение(σ)
+        elif title == "Распределенные нагрузки":
+            self.setColumnWidth(0, 100)  # № стержня
+            self.setColumnWidth(1, 139)  # q
+        elif title == "Сосредоточенные нагрузки":
+            self.setColumnWidth(0, 100)  # № узла
+            self.setColumnWidth(1, 139)  # F
         elif title == "Распределенные нагрузки":
             self.setItemDelegateForColumn(0, TablesDelegate(self, is_int=True, is_positive=True))
             self.setItemDelegateForColumn(1, TablesDelegate(self, is_int=False, is_positive=False))

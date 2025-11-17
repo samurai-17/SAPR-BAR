@@ -1,7 +1,6 @@
 import os
-from reportlab.platypus import Table, TableStyle, Paragraph, Spacer, Image, PageBreak
+from reportlab.platypus import PageBreak
 from reportlab.lib.styles import ParagraphStyle
-from reportlab.lib import colors
 import tempfile
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QTabWidget, QTextEdit,
@@ -11,7 +10,12 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt, QTimer
 from processor import calculate_reactions
 import numpy as np
-
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
+from reportlab.lib.styles import getSampleStyleSheet
+from reportlab.lib import colors
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
@@ -228,14 +232,6 @@ class PostProcessorArea(QWidget):
 
             graph_files = self._save_graphs_simple()
             temp_files.extend(graph_files)
-
-            # Создаем PDF с правильной кодировкой
-            from reportlab.lib.pagesizes import A4
-            from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, Image
-            from reportlab.lib.styles import getSampleStyleSheet
-            from reportlab.lib import colors
-            from reportlab.pdfbase import pdfmetrics
-            from reportlab.pdfbase.ttfonts import TTFont
 
             doc = SimpleDocTemplate(file_name, pagesize=A4)
             elements = []
@@ -719,21 +715,90 @@ class PostProcessorArea(QWidget):
                 # Заполняем таблицу
                 self._fill_table(rows)
 
-                # Показываем проверку прочности
+                # Показываем проверку прочности для отдельного стержня
                 self._show_safety_check(rows, bar_num)
 
             else:
-                # Сводная таблица - скрываем проверку прочности
+                # Сводная таблица - показываем общую проверку прочности конструкции
                 rows = all_rows
                 self._fill_table(rows)
-                self.safety_check_widget.setVisible(False)
+                self._show_overall_safety_check(rows)
 
         except Exception as e:
             print(f"[Ошибка при обновлении таблицы] {e}")
             self.safety_check_widget.setVisible(False)
 
+    def _show_overall_safety_check(self, rows):
+        """Показывает проверку прочности для всей конструкции"""
+        if not rows:
+            self.safety_check_widget.setVisible(False)
+            return
+
+        # Собираем максимальные напряжения по всем стержням
+        bar_max_stresses = {}
+        for row in rows:
+            bar_num = row["bar"]
+            sigma_abs = abs(row["sigma"])
+            if bar_num not in bar_max_stresses or sigma_abs > bar_max_stresses[bar_num]:
+                bar_max_stresses[bar_num] = sigma_abs
+
+        # Проверяем прочность каждого стержня
+        unsafe_bars = []
+        safety_factors = {}
+
+        for bar_num, max_sigma in bar_max_stresses.items():
+            allowed_sigma = self._get_allowed_sigma_for_bar(bar_num)
+            if allowed_sigma is not None:
+                is_safe = max_sigma <= abs(allowed_sigma)
+                safety_factor = abs(allowed_sigma) / max_sigma if max_sigma != 0 else float('inf')
+                safety_factors[bar_num] = safety_factor
+
+                if not is_safe:
+                    unsafe_bars.append(bar_num)
+
+        # Формируем текст результата
+        if not safety_factors:
+            safety_text = "Не удалось проверить прочность: отсутствуют данные о допустимых напряжениях"
+            bg_color = "#fff3cd"
+            text_color = "#856404"
+        else:
+            min_safety_factor = min(safety_factors.values())
+            overall_is_safe = len(unsafe_bars) == 0
+
+            safety_text = "<b>Проверка прочности конструкции:</b><br>"
+
+            # Добавляем информацию по каждому стержню
+            for bar_num in sorted(safety_factors.keys()):
+                status = "✅" if bar_num not in unsafe_bars else "❌"
+                safety_text += f"Стержень {bar_num}: {status} (K={safety_factors[bar_num]:.3f})<br>"
+
+            safety_text += f"<br><b>Минимальный коэффициент запаса: {min_safety_factor:.3f}</b><br>"
+
+            if overall_is_safe:
+                safety_text += "<b style='color: green;'>КОНСТРУКЦИЯ ПРОЧНА</b>"
+                bg_color = "#d4edda"
+                text_color = "#155724"
+            else:
+                safety_text += f"<b style='color: red;'>КОНСТРУКЦИЯ НЕПРОЧНА</b><br>"
+                safety_text += f"Не обеспечена прочность стержней: {', '.join(map(str, unsafe_bars))}"
+                bg_color = "#f8d7da"
+                text_color = "#721c24"
+
+        # Обновляем виджеты
+        self.safety_title.setText("Проверка прочности конструкции:")
+        self.safety_result.setText(safety_text)
+        self.safety_result.setStyleSheet(f"""
+            padding: 15px; 
+            background-color: {bg_color}; 
+            border-radius: 8px; 
+            color: {text_color};
+            border: 1px solid {text_color}20;
+            font-size: 11pt;
+        """)
+        self.safety_check_widget.setVisible(True)
+
     def _fill_table(self, rows):
-        """Заполняет таблицу без проверки прочности (для сводной таблицы)"""
+        """Заполняет таблицу с подсветкой напряжений, не удовлетворяющих условию прочности"""
         self.table_widget.blockSignals(True)
         self.table_widget.clearContents()
         self.table_widget.setRowCount(0)
@@ -745,11 +810,30 @@ class PostProcessorArea(QWidget):
         self.table_widget.setRowCount(len(rows))
 
         for i, r in enumerate(rows):
-            self.table_widget.setItem(i, 0, QTableWidgetItem(str(r["bar"])))
+            bar_num = r["bar"]
+            sigma_value = r["sigma"]
+
+            # Создаем элементы таблицы
+            self.table_widget.setItem(i, 0, QTableWidgetItem(str(bar_num)))
             self.table_widget.setItem(i, 1, QTableWidgetItem(f"{r['x']:.5f}"))
             self.table_widget.setItem(i, 2, QTableWidgetItem(f"{r['u']:.6e}"))
             self.table_widget.setItem(i, 3, QTableWidgetItem(f"{r['N']:.6e}"))
-            self.table_widget.setItem(i, 4, QTableWidgetItem(f"{r['sigma']:.6e}"))
+
+            # Ячейка напряжения - проверяем условие прочности
+            sigma_item = QTableWidgetItem(f"{sigma_value:.6e}")
+
+            # Получаем допустимое напряжение для этого стержня
+            allowed_sigma = self._get_allowed_sigma_for_bar(bar_num)
+            if allowed_sigma is not None:
+                # Проверяем условие прочности
+                if abs(sigma_value) > abs(allowed_sigma):
+                    # Напряжение превышает допустимое - подсвечиваем красным
+                    sigma_item.setBackground(Qt.red)
+                    sigma_item.setForeground(Qt.white)
+                    sigma_item.setToolTip(
+                        f"Напряжение превышает допустимое: {abs(sigma_value):.6e} > {abs(allowed_sigma):.6e}")
+
+            self.table_widget.setItem(i, 4, sigma_item)
 
         self.table_widget.blockSignals(False)
 

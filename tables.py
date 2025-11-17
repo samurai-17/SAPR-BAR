@@ -1,8 +1,8 @@
 import json
-
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QTimer
 from PyQt5.QtWidgets import (
-    QTableWidget, QHeaderView, QFileDialog, QMessageBox, QTableWidgetItem
+    QTableWidget, QFileDialog,
+    QMessageBox, QTableWidgetItem
 )
 from tables_delegate import TablesDelegate
 import validators
@@ -28,18 +28,17 @@ class Table(QTableWidget):
             self.setColumnWidth(1, 150)  # Поперечное сечение(A)
             self.setColumnWidth(2, 150)  # Модуль упругости(E)
             self.setColumnWidth(3, 125)  # Напряжение(σ)
-        elif title == "Распределенные нагрузки":
-            self.setColumnWidth(0, 100)  # № стержня
-            self.setColumnWidth(1, 139)  # q
-        elif title == "Сосредоточенные нагрузки":
-            self.setColumnWidth(0, 100)  # № узла
-            self.setColumnWidth(1, 139)  # F
+
         elif title == "Распределенные нагрузки":
             self.setItemDelegateForColumn(0, TablesDelegate(self, is_int=True, is_positive=True))
             self.setItemDelegateForColumn(1, TablesDelegate(self, is_int=False, is_positive=False))
+            self.setColumnWidth(0, 100)  # № стержня
+            self.setColumnWidth(1, 139)  # q
         else:
             self.setItemDelegateForColumn(0, TablesDelegate(self, is_int=True, is_positive=True))
             self.setItemDelegateForColumn(1, TablesDelegate(self, is_int=False, is_positive=False))
+            self.setColumnWidth(0, 100)  # № узла
+            self.setColumnWidth(1, 139)  # F
 
     def add_row(self):
         cur_row = self.currentRow()
@@ -175,6 +174,23 @@ class Table(QTableWidget):
             w.chk_left_fixed.setChecked(bool(data["left_fixed"]))
         if "right_fixed" in data:
             w.chk_right_fixed.setChecked(bool(data["right_fixed"]))
+
+        self.trigger_auto_draw()
+
+    def trigger_auto_draw(self):
+        """Запуск автоматической отрисовки конструкции после загрузки"""
+        # Ищем главное окно через parent()
+        parent = self.parent_window
+        while parent and not hasattr(parent, 'draw_construction'):
+            if hasattr(parent, 'parent'):
+                parent = parent.parent()
+            else:
+                parent = None
+
+        if parent and hasattr(parent, 'draw_construction'):
+            # Вызываем отрисовку с небольшой задержкой, чтобы данные успели обновиться
+
+            QTimer.singleShot(100, parent.draw_construction)
 
     def fill_table_from_dicts(self, table, values_list, skip_auto_keys=None):
         if skip_auto_keys is None:

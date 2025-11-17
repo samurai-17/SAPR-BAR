@@ -1,6 +1,7 @@
 from PyQt5.QtWidgets import QWidget, QMessageBox
 from PyQt5.QtGui import QPainter, QPen, QColor, QBrush
 from PyQt5.QtCore import Qt
+import math
 from validators import validate_data_on_save  # импортируем валидацию
 
 
@@ -210,8 +211,6 @@ class DrawArea(QWidget):
         A_min = min(A_values)
         A_max = max(A_values)
 
-        import math
-
         # безопасное логарифмическое масштабирование
         def scaled_L_raw(L):
             return math.log10(max(L, 0.0) + 1.0)
@@ -356,9 +355,9 @@ class DrawArea(QWidget):
             qp.drawLine(int(x), int(top), int(x), int(bottom))
             step = 6
             for yy in range(int(top), int(bottom), step):
-                qp.drawLine(int(x), yy, int(x - 10), yy + step)
+                qp.drawLine(int(x), yy, int(x - 10), yy + step)  # штрихи вниз-влево
         elif side == "right":
             qp.drawLine(int(x), int(top), int(x), int(bottom))
             step = 6
             for yy in range(int(top), int(bottom), step):
-                qp.drawLine(int(x), yy, int(x + 10), yy + step)
+                qp.drawLine(int(x), yy, int(x + 10), yy - step)  # штрихи вверх-вправо

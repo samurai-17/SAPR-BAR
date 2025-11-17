@@ -1,22 +1,11 @@
 # processor.py
 import numpy as np
 
+
 def calculate_structure(window, n_points_per_bar_table=5, n_points_per_bar_graph=100):
     """
     Расчёт конструкции методом перемещений на основе таблиц окна.
-    Возвращает:
-        U      — массив узловых перемещений (размер n_nodes),
-        N      — список усилий в каждом стержне (одно значение, например среднее/реакция),
-        sigma  — список напряжений в каждом стержне (N/A),
-        table  — список словарей с подробными значениями по точкам вдоль конструкции.
-    Примечания:
-      - window должен иметь table_1 (стержни с L, A, E),
-        table_2 (распределённые нагрузки: № стержня, q),
-        table_3 (сосредоточенные силы: № узла, F),
-        и булевы атрибуты left_fixed, right_fixed.
-      - sign convention: положительный q направлен вправо (соответствует формуле).
     """
-
     # --- Считываем таблицу стержней (L, A, E) ---
     bars = []
     for row in range(window.table_1.table.rowCount()):
@@ -31,7 +20,6 @@ def calculate_structure(window, n_points_per_bar_table=5, n_points_per_bar_graph
             E = float(E_item.text())
             bars.append((L, A, E))
         except Exception:
-            # пропускаем некорректные строки
             continue
 
     n_bars = len(bars)
@@ -76,18 +64,19 @@ def calculate_structure(window, n_points_per_bar_table=5, n_points_per_bar_graph
     for i, (L, A, E) in enumerate(bars):
         k = E * A / L
         K[i, i] += k
-        K[i, i+1] -= k
-        K[i+1, i] -= k
-        K[i+1, i+1] += k
+        K[i, i + 1] -= k
+        K[i + 1, i] -= k
+        K[i + 1, i + 1] += k
 
-        q = q_loads.get(i+1, 0.0)
+        q = q_loads.get(i + 1, 0.0)
         b[i] += q * L / 2.0
-        b[i+1] += q * L / 2.0
+        b[i + 1] += q * L / 2.0
 
     # добавляем сосредоточенные силы
     for node, F in F_loads.items():
         b[node - 1] += F
 
+    # --- Граничные условия (заделки) ---
     # --- Граничные условия (заделки) ---
     left_fixed = getattr(window, "left_fixed", False)
     right_fixed = getattr(window, "right_fixed", False)
@@ -98,34 +87,45 @@ def calculate_structure(window, n_points_per_bar_table=5, n_points_per_bar_graph
         fixed_dofs.append(n_nodes - 1)
     free_dofs = [i for i in range(n_nodes) if i not in fixed_dofs]
 
-    if len(free_dofs) == 0:
-        raise ValueError("Нет свободных степеней, нет решения.")
+    # ИСПРАВЛЕНИЕ: Если обе опоры закреплены, НЕ освобождаем правую, а используем статически неопределимый расчет
+    if len(free_dofs) == 0 and n_nodes > 1:
+        # Для статически неопределимой системы используем другой подход
+        # Оставляем обе опоры закрепленными, но решаем специальным методом
+        print("Статически неопределимая система: обе опоры закреплены")
+        # В этом случае все перемещения должны быть нулевыми
+        U = np.zeros(n_nodes, dtype=float)
 
-    if len(fixed_dofs) == 0:
-        raise ValueError("Конструкция механически неустойчива (матрица жёсткости вырождена). "
-                     "Добавьте хотя бы одну заделку.")
+        # Но усилия могут быть ненулевыми из-за распределенных нагрузок
+        # Рассчитываем усилия отдельно для статически неопределимой системы
+    else:
+        # Статически определимая система - решаем как обычно
+        if len(free_dofs) == 0:
+            raise ValueError("Нет свободных степеней свободы для расчёта.")
 
-    # --- Решаем систему для свободных DOF ---
-    K_ff = K[np.ix_(free_dofs, free_dofs)]
-    b_f = b[free_dofs]
+        # Решаем систему для свободных степеней свободы
+        K_ff = K[np.ix_(free_dofs, free_dofs)]
+        b_f = b[free_dofs]
 
-    U_f = np.linalg.solve(K_ff, b_f)
+        try:
+            U_f = np.linalg.solve(K_ff, b_f)
+        except np.linalg.LinAlgError:
+            U_f = np.linalg.pinv(K_ff) @ b_f
 
-    # --- Собираем полный вектор перемещений U ---
-    U = np.zeros(n_nodes, dtype=float)
-    for idx, dof in enumerate(free_dofs):
-        U[dof] = U_f[idx]
-    # фиксированные DOF остаются нулевыми (или можно считать заданными если у тебя были prescribed non-zero)
+        # Собираем полный вектор перемещений
+        U = np.zeros(n_nodes, dtype=float)
+        for idx, dof in enumerate(free_dofs):
+            U[dof] = U_f[idx]
+        for dof in fixed_dofs:
+            U[dof] = 0.0
 
     # --- Усилия и напряжения "в узле" / средние по стержню ---
     N_list = []
     sigma_list = []
     for i, (L, A, E) in enumerate(bars):
-        q = q_loads.get(i+1, 0.0)
+        q = q_loads.get(i + 1, 0.0)
         U1 = U[i]
-        U2 = U[i+1]
-        N_val = E * A / L * (U2 - U1) + q * (L / 2.0)   # значение N при x=0 (или среднее + константа)
-        # примечание: это значение смещено константой q L/2 — в таблице ниже у нас N(x) будет вычисляться явно
+        U2 = U[i + 1]
+        N_val = E * A / L * (U2 - U1) + q * (L / 2.0)
         sigma_val = N_val / A if A != 0 else 0.0
         N_list.append(N_val)
         sigma_list.append(sigma_val)
@@ -138,14 +138,13 @@ def calculate_structure(window, n_points_per_bar_table=5, n_points_per_bar_graph
         q = q_loads.get(i, 0.0)
         U1 = U[i - 1]
         U2 = U[i]
-        n_pts = max(2, int(n_points_per_bar_table))  # Меньше точек для таблицы
+        n_pts = max(2, int(n_points_per_bar_table))
         step = L / (n_pts - 1)
 
         for j in range(0, n_pts):
             x_local = j * step
             x_global = total_x + x_local
 
-            # вычисления u_x, N_x, sigma_x (остаются без изменений)
             try:
                 correction = (q / (2.0 * E * A)) * (x_local * (L - x_local)) if (E != 0 and A != 0) else 0.0
             except Exception:
@@ -175,14 +174,13 @@ def calculate_structure(window, n_points_per_bar_table=5, n_points_per_bar_graph
         q = q_loads.get(i, 0.0)
         U1 = U[i - 1]
         U2 = U[i]
-        n_pts = max(2, int(n_points_per_bar_graph))  # Больше точек для графиков
+        n_pts = max(2, int(n_points_per_bar_graph))
         step = L / (n_pts - 1)
 
         for j in range(0, n_pts):
             x_local = j * step
             x_global = total_x + x_local
 
-            # вычисления u_x, N_x, sigma_x (такие же как выше)
             try:
                 correction = (q / (2.0 * E * A)) * (x_local * (L - x_local)) if (E != 0 and A != 0) else 0.0
             except Exception:
@@ -208,16 +206,14 @@ def calculate_structure(window, n_points_per_bar_table=5, n_points_per_bar_graph
         "U": U,
         "N": N_list,
         "sigma": sigma_list,
-        "table": table_data,  # Для таблиц (мало точек)
-        "graph_table": graph_data  # Для графиков (много точек)
+        "table": table_data,
+        "graph_table": graph_data
     }
 
 
 def calculate_reactions(window):
     """Вычисляет реакции в заделках после выполнения calculate_structure."""
     try:
-
-
         # считываем таблицу стержней
         bars = []
         for row in range(window.table_1.table.rowCount()):
@@ -282,4 +278,3 @@ def calculate_reactions(window):
         return reactions
     except Exception:
         return {}
-

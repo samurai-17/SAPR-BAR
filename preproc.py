@@ -2,11 +2,12 @@ import sys
 from PyQt5.QtWidgets import (
     QWidget, QApplication, QHBoxLayout, QVBoxLayout,
     QCheckBox, QSizePolicy, QGroupBox, QPushButton,
-    QTabWidget, QTextEdit, QMessageBox, QLabel,
-    QTableWidget, QTableWidgetItem
+    QTabWidget, QMessageBox, QTableWidget, QTableWidgetItem,
+    QTextEdit
 )
 from PyQt5 import QtGui, QtCore
 from tables import Table
+from PyQt5.QtWinExtras import QtWin
 from draw_area import DrawArea
 from processor import calculate_structure  # ✅ добавили
 from postprocessor import PostProcessorArea
@@ -81,7 +82,7 @@ class Window(QWidget):
         layout.addWidget(self.results_table)
 
         # 🔹 текстовый блок для вывода дельт (узловых перемещений)
-        from PyQt5.QtWidgets import QTextEdit
+
         self.delta_output = QTextEdit()
         self.delta_output.setReadOnly(True)
         self.delta_output.setMinimumHeight(80)
@@ -139,23 +140,6 @@ class Window(QWidget):
         self.post_area = PostProcessorArea(self)
         layout.addWidget(self.post_area)
         self.tab_post.setLayout(layout)
-
-    # def show_epures(self):
-    #     if not hasattr(self, "results_table") or self.results_table.rowCount() == 0:
-    #         QMessageBox.warning(self, "Ошибка", "Сначала рассчитайте конструкцию на вкладке 'Процессор'.")
-    #         return
-    #
-    #     if not self.draw_area.structure_data:
-    #         QMessageBox.warning(self, "Ошибка", "Конструкция не построена.")
-    #         return
-    #
-    #     try:
-    #         from processor import calculate_structure
-    #         results = calculate_structure(self)
-    #         self.post_area.set_results(self.draw_area.structure_data, results)
-    #         QMessageBox.information(self, "Готово", "✅ Эпюры построены!")
-    #     except Exception as e:
-    #         QMessageBox.critical(self, "Ошибка", f"Ошибка при построении эпюр:\n{e}")
 
     def show_post_results(self):
         if not hasattr(self, "proc_results"):
@@ -274,7 +258,7 @@ class Window(QWidget):
 
 
 if __name__ == '__main__':
-    from PyQt5.QtWinExtras import QtWin
+
     myappid = 'mycompany.myproduct.subproduct.version'
     QtWin.setCurrentProcessExplicitAppUserModelID(myappid)
 
